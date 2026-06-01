@@ -17,9 +17,8 @@ html, body { margin: 0; min-height: 100%; }
 body {
   font: 13px var(--ui-font); color: var(--ink); padding: 28px 16px;
   display: flex; flex-direction: column; align-items: center; gap: 12px;
-  background:
-    radial-gradient(120% 90% at 50% -10%, hsl(265 35% 30%), hsl(265 30% 16%) 70%),
-    #15121d;
+  /* Windows-98 desktop minty green */
+  background: radial-gradient(130% 100% at 50% 0%, #5fc4ab, #2f9e86 75%), #2f9e86;
   background-attachment: fixed;
 }
 
@@ -111,8 +110,8 @@ body.on .power { display: none; }
   100% { transform: none; filter: none; opacity: 1; }
 }
 
-.foot { font-size: 11px; color: #b9b3c9; }
-.foot a { color: #cdb8ff; }
+.foot { font-size: 11px; color: #0e3b31; }
+.foot a { color: #0a5c4a; }
 
 @media (max-width: 620px) {
   .body { flex-direction: column; }
