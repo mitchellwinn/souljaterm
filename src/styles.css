@@ -64,6 +64,8 @@ html, body {
 #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 #tabbar { height: 26px; flex: 0 0 26px; display: flex; align-items: stretch; -webkit-app-region: drag; gap: 3px; }
 #app.sidebar-collapsed #tabbar { padding-left: 76px; }
+#sidebar-show { display: none; -webkit-app-region: no-drag; align-self: center; padding: 0 6px; }
+#app.sidebar-collapsed #sidebar-show { display: inline-flex; align-items: center; }
 #tab-list { display: flex; align-items: stretch; gap: 3px; overflow-x: auto; }
 
 .tab {
@@ -94,6 +96,52 @@ html, body {
 .term-host { position: absolute; inset: 0; padding: 4px 6px; display: none; background: var(--screen); }
 .term-host.active { display: block; }
 .xterm { height: 100%; }
+
+/* ---- 90s scrollbar ---- */
+/* Giving ::-webkit-scrollbar an explicit width turns off the macOS overlay scrollbar and
+   makes a classic one that reserves its own column. xterm's fit addon subtracts that width
+   when sizing the grid, so terminal text stops at the bar instead of running underneath it. */
+.xterm-viewport::-webkit-scrollbar { width: 15px; }
+.xterm-viewport::-webkit-scrollbar-track {
+  /* recessed dithered gray, à la Win95 */
+  background: repeating-conic-gradient(var(--chrome) 0 25%, var(--chrome-deep) 0 50%) 0 0 / 2px 2px;
+  border-left: 1px solid var(--dark);
+}
+.xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--chrome);
+  border: 2px solid; border-color: var(--light) var(--dark) var(--dark) var(--light);
+  min-height: 24px;
+}
+.xterm-viewport::-webkit-scrollbar-thumb:active {
+  border-color: var(--dark) var(--light) var(--light) var(--dark);
+}
+/* raised arrow buttons at each end; triangle drawn with two gradients (no img — CSP-safe) */
+.xterm-viewport::-webkit-scrollbar-button:vertical {
+  height: 15px; background-color: var(--chrome);
+  border: 2px solid; border-color: var(--light) var(--dark) var(--dark) var(--light);
+  background-repeat: no-repeat;
+}
+.xterm-viewport::-webkit-scrollbar-button:vertical:active {
+  border-color: var(--dark) var(--light) var(--light) var(--dark);
+}
+.xterm-viewport::-webkit-scrollbar-button:vertical:decrement {
+  background-image:
+    linear-gradient(to top right, transparent 49%, var(--ink) 50%),
+    linear-gradient(to top left,  var(--ink) 50%, transparent 51%);
+  background-size: 4px 6px, 4px 6px;
+  background-position: 2.5px center, 6.5px center;
+}
+.xterm-viewport::-webkit-scrollbar-button:vertical:increment {
+  background-image:
+    linear-gradient(to bottom right, transparent 49%, var(--ink) 50%),
+    linear-gradient(to bottom left,  var(--ink) 50%, transparent 51%);
+  background-size: 4px 6px, 4px 6px;
+  background-position: 2.5px center, 6.5px center;
+}
+/* single button per end — kill the phantom second buttons and the corner */
+.xterm-viewport::-webkit-scrollbar-button:vertical:start:increment,
+.xterm-viewport::-webkit-scrollbar-button:vertical:end:decrement { display: none; }
+.xterm-viewport::-webkit-scrollbar-corner { background: var(--chrome); }
 
 #empty-state { position: absolute; inset: 0; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 10px; color: var(--lcd); font-family: var(--mono-font); }

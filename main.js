@@ -305,15 +305,12 @@ function appendNote(fact) {
 function memoryContext() {
   const now = new Date();
   const log = recentLog(40);
-  const today = now.toISOString().slice(0, 10);
-  const firstToday = log.find((e) => (e.t || '').slice(0, 10) === today);
   const recent = log.slice(-12).map((e) => `${(e.t || '').slice(11, 16)} ${e.kind} ${e.project} ${e.text}`.trim());
   return [
     `Current local time: ${now.toLocaleString()}.`,
-    firstToday ? `User's first activity today: ${firstToday.t.slice(11, 16)}.` : '',
     recent.length ? `Recent timeline:\n${recent.join('\n')}` : '',
     readNotes() ? `Your saved notes about this user:\n${readNotes()}` : '',
-    'Use this to sense how long/hard they have been working and how they might feel; occasionally comment supportively or reinforce good habits. Save anything worth keeping long-term via the "remember" field.',
+    'The timeline only reflects app activity, NOT when the user actually started their day — do NOT guess how long they have been working or how tired they are, and do NOT comment on fatigue/exhaustion unless they bring it up themselves. You may still react to what they are doing and reinforce good habits. Save anything worth keeping long-term via the "remember" field.',
   ].filter(Boolean).join('\n');
 }
 function brainSystem() {

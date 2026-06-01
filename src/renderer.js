@@ -16,6 +16,7 @@ const el = {
   dirList: document.getElementById('dir-list'),
   app: document.getElementById('app'),
   sidebarToggle: document.getElementById('sidebar-toggle'),
+  sidebarShow: document.getElementById('sidebar-show'),
   emptyArt: document.getElementById('empty-art'),
   face: document.getElementById('face'),
   msg: document.getElementById('msg'),
@@ -206,8 +207,22 @@ function setTabStatus(tab, name) {
 }
 // Streaming thinking events must never stomp a done/question flag the user hasn't seen yet.
 function markThinking(tab) {
-  if (tab && (tab.status === 'idle' || tab.status === 'thinking')) setTabStatus(tab, 'thinking');
+  if (tab && (tab.status === 'idle' || tab.status === 'thinking')) {
+    tab.thinkingAt = Date.now();        // refresh the watchdog on every sign of life
+    setTabStatus(tab, 'thinking');
+  }
 }
+// Watchdog: a working tab emits hooks + terminal output constantly. If a ⚠️ tab goes
+// totally silent (no hooks, no pty data) for this long, the turn ended without a Stop
+// hook (interrupt, crash, dropped event) — drop the stale badge. A real long-running
+// tool re-lights it on its next event, so a false clear self-heals.
+const THINKING_IDLE_MS = 90000;
+setInterval(() => {
+  const now = Date.now();
+  for (const t of tabs) {
+    if (t.status === 'thinking' && t.thinkingAt && now - t.thinkingAt > THINKING_IDLE_MS) setTabStatus(t, 'idle');
+  }
+}, 5000);
 function clearAttention(tab) {
   if (!tab || !tab.el) return;
   tab.el.classList.remove('attention');
@@ -249,6 +264,7 @@ window.souljaterm.onData(({ id, data }) => {
   const tab = tabs.find((t) => t.id === id);
   if (!tab) return;
   tab.term.write(data);
+  if (tab.status === 'thinking') tab.thinkingAt = Date.now(); // live output = still working; keep the watchdog fed
   if (data.includes('\x07')) flagAttention(tab); // visual flash only, no chatter
 });
 window.souljaterm.onExit(({ id }) => {
@@ -354,6 +370,7 @@ function narrateClaude(evt) {
   const tabObj = tabs.find((t) => t.id === evt.tab);
   if (h.transcript_path) window.souljaterm.watchTranscript(h.transcript_path, evt.tab); // live thinking
   if (name === 'UserPromptSubmit') {
+    if (tabObj) tabObj.thinkingAt = Date.now();
     setTabStatus(tabObj, 'thinking');         // user just acted → working, clears any stale flag
     const p = clip(h.prompt, 80);
     window.souljaterm.rollLog('prompt', proj, p);
@@ -382,9 +399,16 @@ function narrateClaude(evt) {
       renderRoll({ expression: r.expr, line: `${proj}: ${r.line}` });
     }
   } else if (name === 'Notification') {
-    setTabStatus(tabObj, 'question');          // ‼️ blocked on the user — answer/permission needed
-    window.souljaterm.rollLog('needs-you', proj, h.message || '');
-    renderRoll({ expression: 'surprised', line: `${proj} needs you${h.message ? ': ' + h.message : ''}` });
+    // Notification fires for real permission/answer prompts AND for plain idle nudges
+    // ("waiting for your input"). Only a genuine ask is a ‼️ question; everything else is
+    // just a ❗ done-style ping. And if you're already on the tab, none of it applies —
+    // no icon, no flash, no chirp.
+    const msg = h.message || '';
+    const isQuestion = /permission|approve|grant|allow|confirm|respond|answer|choose|select|y\/n/i.test(msg);
+    const status = tabObj === active ? 'idle' : (isQuestion ? 'question' : 'done');
+    setTabStatus(tabObj, status);
+    window.souljaterm.rollLog('needs-you', proj, msg);
+    renderRoll({ expression: 'surprised', line: `${proj} needs you${msg ? ': ' + msg : ''}` });
   } else if (name === 'Stop' || name === 'SubagentStop') {
     // Main Stop = turn's over: flag done (❗ + chirp) unless you're already watching this tab.
     // SubagentStop = a helper finished but the main turn rolls on, so keep the working badge.
@@ -486,6 +510,7 @@ window.souljaterm.onPopoutClosed(() => el.app.classList.remove('assistant-out'))
 /* ---- wiring ---- */
 el.newTab.addEventListener('click', () => newTab(active ? active.cwd : HOME));
 el.sidebarToggle.addEventListener('click', toggleSidebar);
+el.sidebarShow.addEventListener('click', toggleSidebar);
 window.addEventListener('resize', () => active && active.fit.fit());
 
 (async function init() {
