@@ -17,9 +17,11 @@
       </div>
       <div id="dir-list"></div>
       <div id="sidebar-foot" class="bevel-title">
+        <div class="foot-row"><span class="foot-label">DIR</span><button id="dir-pick" class="btn" title="Choose which folder the sidebar lists">choose folder…</button></div>
         <div class="foot-row"><span class="foot-label">FONT</span><select id="font-picker" class="btn"></select></div>
         <div class="foot-row"><span class="foot-label">ROLL</span><select id="roll-brain" class="btn"></select></div>
         <div class="foot-row"><span class="foot-label">VOICE</span><select id="voice-pick" class="btn"><option value="on">on</option><option value="off">off</option></select></div>
+        <div class="foot-row"><span class="foot-label">VOL</span><input id="voice-vol" type="range" min="0" max="100" title="Roll's voice-clip volume (relative to her animalese)" /></div>
         <div class="foot-row"><span class="foot-label">MEM</span><button id="mem-clear" class="btn">clear memory</button></div>
       </div>
     </aside>
@@ -32,8 +34,7 @@
       </div>
       <div id="terminals">
         <div id="empty-state">
-          <pre id="empty-art"></pre>
-          <div class="empty-msg">no session — pick a folder, or ⌘T</div>
+          <div id="onboard" class="onboard"></div>
         </div>
       </div>
     </main>
@@ -48,6 +49,7 @@
       </div>
       <div id="assistant-body">
         <div id="face" class="lcd"></div>
+        <button id="msg-tab" class="msg-tab" title="Jump to this tab" hidden></button>
         <div id="msg" class="lcd lcd-text"></div>
         <form id="chat-form" autocomplete="off">
           <input id="chat-input" type="text" placeholder="talk to Roll…" />

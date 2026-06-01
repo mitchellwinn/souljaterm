@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>souljaterm — the retro terminal with Roll</title>
+  <meta name="description" content="A terminal that runs Claude Code, with Roll living inside it. Native on macOS, Windows & Linux." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main id="frame" class="panel-raised">
+    <div class="titlebar bevel-title">
+      <span class="lights"><i></i><i></i><i></i></span>
+      <span class="title">souljaterm</span>
+    </div>
+    <div class="body">
+      <section class="screen inset">
+        <div class="prompt">~/projects <span class="ar">❯</span> souljaterm<span class="cur">▋</span></div>
+        <div class="reveal">
+          <h1>the retro terminal with Roll.</h1>
+          <p class="tag">a real shell that runs Claude Code — with Roll living inside it.</p>
+          <ul class="feats">
+            <li>▸ real shells in colorful, rainbow-ordered tabs</li>
+            <li>▸ Roll narrates your sessions — reactions + alerts when Claude needs you</li>
+            <li>▸ her voice is yours to control — animalese, clips &amp; chimes, muted with one toggle</li>
+            <li>▸ native on macOS, Windows &amp; Linux — your machine, your Claude login, free</li>
+          </ul>
+          <div class="cta">
+            <a id="dl-primary" class="btn big" href="#" target="_blank" rel="noopener">⤓ Download</a>
+            <div class="dl-os">
+              <a id="dl-mac" href="#" target="_blank" rel="noopener">macOS</a> ·
+              <a id="dl-win" href="#" target="_blank" rel="noopener">Windows</a> ·
+              <a id="dl-linux" href="#" target="_blank" rel="noopener">Linux</a> ·
+              <a id="dl-src" href="#" target="_blank" rel="noopener">source ↗</a>
+            </div>
+            <div class="note">free · open source · runs your own Claude Code login (no key needed)</div>
+          </div>
+        </div>
+        <div class="boot-hint">▸ click Roll's screen to power on →</div>
+      </section>
+      <aside class="roll panel-raised">
+        <div class="roll-head bevel-title">ROLL</div>
+        <div id="face" class="lcd"><button id="power" class="power" type="button">⏻<span>power on</span></button></div>
+        <div id="msg" class="lcd lcd-text"></div>
+      </aside>
+    </div>
+  </main>
+  <footer class="foot">a <a href="https://mitchart.net" rel="noopener">mitchart.net</a> joint</footer>
+
+  <script src="roll-anim.js"></script>
+  <script src="roll-face.js"></script>
+  <script src="landing.js"></script>
+</body>
+</html>

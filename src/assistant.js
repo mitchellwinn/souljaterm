@@ -4,7 +4,11 @@ const roll = new window.RollFace(
   document.getElementById('pop-msg')
 );
 
-window.souljaterm.onAssistantState((state) => roll.speak(state));
+// `instant` states are window-to-window handoffs — show them as-is instead of re-typing.
+window.souljaterm.onAssistantState((state) => {
+  if (!state) return;
+  if (state.instant) roll.show(state); else roll.speak(state);
+});
 document.getElementById('pop-in').addEventListener('click', () => window.souljaterm.popin());
 document.getElementById('pop-chat-form').addEventListener('submit', (e) => {
   e.preventDefault();

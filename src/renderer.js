@@ -17,12 +17,14 @@ const el = {
   app: document.getElementById('app'),
   sidebarToggle: document.getElementById('sidebar-toggle'),
   sidebarShow: document.getElementById('sidebar-show'),
-  emptyArt: document.getElementById('empty-art'),
   face: document.getElementById('face'),
+  msgTab: document.getElementById('msg-tab'),
   msg: document.getElementById('msg'),
   fontPicker: document.getElementById('font-picker'),
   rollBrain: document.getElementById('roll-brain'),
   voicePick: document.getElementById('voice-pick'),
+  voiceVol: document.getElementById('voice-vol'),
+  dirPick: document.getElementById('dir-pick'),
   memClear: document.getElementById('mem-clear'),
   chatForm: document.getElementById('chat-form'),
   chatInput: document.getElementById('chat-input'),
@@ -31,12 +33,24 @@ const el = {
   assistantRestore: document.getElementById('assistant-restore'),
 };
 
-/* ---- color: stable hue from a path ---- */
-function hueOf(p) {
+/* ---- color: projects fanned across the rainbow, alphabetical ---- */
+// Every known project (a folder in the sidebar) gets an evenly-spaced hue assigned in A–Z
+// order, so the sidebar reads as a rainbow top-to-bottom and each tab inherits its project's
+// color. Folders we don't know yet (a stray cwd, a subdir) fall back to a stable per-name hash.
+let RAINBOW = new Map();           // project name -> hue (0–359), rebuilt when the sidebar loads
+function buildRainbow(names) {
+  const sorted = [...new Set(names)].sort((a, b) => a.localeCompare(b));
+  const n = sorted.length || 1;
+  RAINBOW = new Map(sorted.map((name, i) => [name, Math.round((360 * i) / n)]));
+}
+function hashHue(s) {
   let h = 0;
-  for (let i = 0; i < p.length; i++) h = (h * 31 + p.charCodeAt(i)) >>> 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   return h % 360;
 }
+function basename(p) { const a = String(p).replace(/[\\/]+$/, '').split(/[\\/]/); return a[a.length - 1] || p; } // handles \ and /
+function prettyName(p) { return p === HOME ? '~' : basename(p); }
+function hueOf(p) { const k = prettyName(p); return RAINBOW.has(k) ? RAINBOW.get(k) : hashHue(k); }
 function colorForPath(p) {
   const hue = hueOf(p);
   return {
@@ -47,8 +61,6 @@ function colorForPath(p) {
     tabFg: `hsl(${hue} 30% 96%)`,
   };
 }
-function basename(p) { const a = p.replace(/\/+$/, '').split('/'); return a[a.length - 1] || p; }
-function prettyName(p) { return p === HOME ? '~' : basename(p); }
 
 /* ---- fonts ---- */
 const FONTS = ['SF Mono', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'IBM Plex Mono',
@@ -103,6 +115,14 @@ function newTab(cwd) {
   const tab = { id, term, fit, host, cwd, title: prettyName(cwd), el: null, status: 'idle' };
   tabs.push(tab);
 
+  // Refit on ANY size change to the active tab's host — window resize, sidebar toggle, minimize,
+  // and crucially browser zoom (⌘+/−), which otherwise leaves the grid misaligned with the
+  // scrollbar (inactive tabs are display:none → size 0, so only refit the visible one).
+  tab.ro = new ResizeObserver(() => {
+    if (tab === active) requestAnimationFrame(() => { try { fit.fit(); } catch (_) {} });
+  });
+  tab.ro.observe(host);
+
   const tabEl = document.createElement('div');
   tabEl.className = 'tab';
   tabEl.innerHTML = '<span class="label"></span><span class="status"></span><span class="close">×</span>';
@@ -136,7 +156,7 @@ function newTab(cwd) {
   el.app.classList.add('has-tabs');
   activate(tab);
   window.souljaterm.rollLog('session', tab.title, 'opened');
-  roll('session_open', { project: tab.title });
+  roll('session_open', { project: tab.title, tab: tab.id });
   return tab;
 }
 
@@ -173,13 +193,14 @@ function cycle(dir) {
 function closeTab(tab) {
   window.souljaterm.kill(tab.id);
   const i = tabs.indexOf(tab);
+  if (tab.ro) { try { tab.ro.disconnect(); } catch (_) {} }
   tab.term.dispose(); tab.host.remove(); tab.el.remove();
   tabs.splice(i, 1);
   roll('session_close', { project: tab.title });
   if (active === tab) {
     const next = tabs[Math.min(i, tabs.length - 1)];
     if (next) activate(next);
-    else { active = null; el.app.classList.remove('has-tabs'); applyTint(null); }
+    else { active = null; el.app.classList.remove('has-tabs'); applyTint(null); loadOnboarding(); } // refresh setup status
   }
 }
 
@@ -187,13 +208,13 @@ function closeTab(tab) {
    idle      → nothing
    thinking  → ⚠️  Claude is working in that session
    done      → ❗  finished its turn while you were elsewhere (flashes + chirps)
-   question  → ‼️  waiting on you to answer/permit something (flashes + chirps)
+   question  → ❓  waiting on you to answer/permit something (flashes + chirps)
    The badge shows on any tab; the flash + sound only fire when it's NOT the active tab. */
 const TAB_STATUS = {
   idle:     { icon: '',     flash: false },
   thinking: { icon: '⚠️',  flash: false },
   done:     { icon: '❗',  flash: true, sfx: 'done' },
-  question: { icon: '‼️',  flash: true, sfx: 'question' },
+  question: { icon: '❓',  flash: true, sfx: 'question' },
 };
 function setTabStatus(tab, name) {
   if (!tab || !tab.el || tab.status === name) return;
@@ -208,7 +229,9 @@ function setTabStatus(tab, name) {
 // Streaming thinking events must never stomp a done/question flag the user hasn't seen yet.
 function markThinking(tab) {
   if (tab && (tab.status === 'idle' || tab.status === 'thinking')) {
-    tab.thinkingAt = Date.now();        // refresh the watchdog on every sign of life
+    const now = Date.now();
+    tab.thinkingAt = now;               // any sign of life (hooks OR pty) feeds this
+    tab.claudeAt = now;                 // real Claude hook only — the ceiling watches this
     setTabStatus(tab, 'thinking');
   }
 }
@@ -216,11 +239,18 @@ function markThinking(tab) {
 // totally silent (no hooks, no pty data) for this long, the turn ended without a Stop
 // hook (interrupt, crash, dropped event) — drop the stale badge. A real long-running
 // tool re-lights it on its next event, so a false clear self-heals.
-const THINKING_IDLE_MS = 90000;
+const THINKING_IDLE_MS = 90000;        // dead silent (no hooks AND no pty) → drop the badge
+const THINKING_MAX_MS = 5 * 60000;     // hard ceiling since the last REAL Claude hook. Raw shell
+                                       // output (dev servers, tail -f, spinners) feeds thinkingAt but
+                                       // NOT claudeAt, so it can no longer pin a ⚠️ forever. A genuine
+                                       // long tool re-lights on its next hook, so an early clear self-heals.
 setInterval(() => {
   const now = Date.now();
   for (const t of tabs) {
-    if (t.status === 'thinking' && t.thinkingAt && now - t.thinkingAt > THINKING_IDLE_MS) setTabStatus(t, 'idle');
+    if (t.status !== 'thinking') continue;
+    const silent = !t.thinkingAt || now - t.thinkingAt > THINKING_IDLE_MS;
+    const stale  = !t.claudeAt   || now - t.claudeAt   > THINKING_MAX_MS;
+    if (silent || stale) setTabStatus(t, 'idle');
   }
 }, 5000);
 function clearAttention(tab) {
@@ -260,11 +290,18 @@ function sfx(kind) {
 function flagAttention(tab) { if (tab !== active) tab.el.classList.add('attention'); }
 
 /* ---- pty -> terminal ---- */
+// Claude Code's inline confirm/permission prompt ("Do you want to proceed?  ❯ 1. Yes …")
+// does NOT reliably emit a Notification hook, so the tab would otherwise sit on ⚠️ while it's
+// actually blocked waiting on you. Sniff the prompt's signature straight from the pty stream
+// and flip the tab to ❓. A false hit self-heals — the next Stop/thinking event clears it.
+const CLAUDE_ASKS = /Do you want to (proceed|continue|create|run|make|allow|apply)|❯\s*1\.\s*Yes|No, and tell Claude|\(y\/n\)/i;
 window.souljaterm.onData(({ id, data }) => {
   const tab = tabs.find((t) => t.id === id);
   if (!tab) return;
   tab.term.write(data);
   if (tab.status === 'thinking') tab.thinkingAt = Date.now(); // live output = still working; keep the watchdog fed
+  if (tab.status !== 'question' && CLAUDE_ASKS.test(data))
+    setTabStatus(tab, tab === active ? 'idle' : 'question'); // it's blocked on you → ❓ (idle if you're already here)
   if (data.includes('\x07')) flagAttention(tab); // visual flash only, no chatter
 });
 window.souljaterm.onExit(({ id }) => {
@@ -274,12 +311,53 @@ window.souljaterm.onExit(({ id }) => {
 
 /* ---- Roll, the assistant ---- */
 const rollFace = new window.RollFace(el.face, el.msg);
+el.face.classList.add('warp-pending'); // hidden until the boot warp-in (init → rollFace.intro)
 let lastRoll = { expression: 'happy', line: "Hi! I'm Roll. I'll keep an eye on your sessions." };
 
+// The colored "which tab" header above Roll's message. Driven by the face's onStart hook so it
+// flips exactly when the line it belongs to starts typing (Roll queues lines, so the state we
+// hand renderRoll isn't always the one on screen yet). A state with no `tab` hides the header.
+let _msgTabId = null;
+function setMsgTab(tab) {
+  const node = el.msgTab;
+  if (!node) return;
+  if (!tab) { node.hidden = true; _msgTabId = null; return; }
+  const c = colorForPath(tab.cwd);
+  node.style.setProperty('--msg-tab-bg', c.tabBgActive);
+  node.style.setProperty('--msg-tab-fg', c.tabFg);
+  node.textContent = tab.title;
+  node.hidden = false;
+  _msgTabId = tab.id;
+  node.classList.remove('flash'); void node.offsetWidth; node.classList.add('flash'); // re-trigger flash
+}
+rollFace.onStart = (state) => setMsgTab(state && state.tab ? tabs.find((t) => t.id === state.tab) : null);
+if (el.msgTab) el.msgTab.addEventListener('click', () => {
+  const t = tabs.find((x) => x.id === _msgTabId);
+  if (t) activate(t);
+});
+
+// Pick a voice clip by MEANING — the same way her expression is chosen. Most lines get none
+// (just animalese); the notable beats get a Japanese exclamation from the downloaded set.
+function pickClip(s) {
+  const expr = s.expression;
+  const line = String(s.line || '').toLowerCase();
+  const kind = s.kind;
+  if (kind === 'attention' || kind === 'error' || expr === 'worried' || expr === 'cry' || expr === 'sad'
+      || /error|fail|crash|snag|stuck|denied|can'?t|cannot|broke/.test(line)) return 'tasukete';     // help!
+  if (kind === 'done' || expr === 'laugh' || /\bdone\b|passed|fixed|works|success|complete|shipped/.test(line)) return 'yattane'; // we did it!
+  if (kind === 'insight' || expr === 'surprised' || /found|discover|turns out|\bhits?\b|matches/.test(line)) return 'mitete';     // watch this!
+  if (kind === 'reflect' || /keep it up|you'?ve got|don'?t worry|i'?m here|hang in|got your back|nice focus/.test(line)) return 'makasete'; // leave it to me (reassurance)
+  if (kind === 'prompt' || kind === 'session_open' || /let'?s|\bstart|new task|here we go/.test(line))
+    return (line.length % 3 === 0) ? 'makasete' : 'ikuyo'; // mostly "here we go", occasionally "leave it to me"
+  return null;
+}
+
+let poppedOut = false;
 function renderRoll(state) {
   lastRoll = state;
-  rollFace.speak(state);
-  window.souljaterm.assistantRender(state); // mirror to popout window if open
+  if (state.clip === undefined) state.clip = pickClip(state); // choose her exclamation (or none)
+  if (!poppedOut) rollFace.speak(state);    // popped out → the pop-out window does the talking, not the hidden dock
+  window.souljaterm.assistantRender(state); // mirror to pop-out window if open
 }
 
 // brain mode: off (scripted) | cli (subscription) | api (Haiku key)
@@ -299,13 +377,17 @@ function initBrainPicker() {
 // Cooldown for LLM summaries (free micro-narration below isn't gated by this).
 const ROLL_COOLDOWN_MS = 8000;
 let _lastRollAt = 0;
+// Roll is "off duty" while minimized: tab badges still fire, but she does no hook narration —
+// which also means no brain calls, so she isn't burning credits when you've tucked her away.
+function rollActive() { return !el.app.classList.contains('assistant-min'); }
 async function roll(kind, ctx) {
+  if (!rollActive()) return;                         // minimized → don't spend a brain call
   const now = Date.now();
   if (now - _lastRollAt < ROLL_COOLDOWN_MS) return; // global cooldown on LLM lines
   _lastRollAt = now;
   try {
     const state = await window.souljaterm.rollSpeak({ kind, ...ctx, brain: currentBrain(), tabCount: tabs.length });
-    if (state && state.line) renderRoll(state);
+    if (state && state.line) renderRoll({ ...state, tab: ctx.tab, kind }); // carry tab (header) + kind (clip choice)
   } catch (_) { /* never let Roll break the terminal */ }
 }
 
@@ -370,17 +452,17 @@ function narrateClaude(evt) {
   const tabObj = tabs.find((t) => t.id === evt.tab);
   if (h.transcript_path) window.souljaterm.watchTranscript(h.transcript_path, evt.tab); // live thinking
   if (name === 'UserPromptSubmit') {
-    if (tabObj) tabObj.thinkingAt = Date.now();
+    if (tabObj) { tabObj.thinkingAt = Date.now(); tabObj.claudeAt = Date.now(); }
     setTabStatus(tabObj, 'thinking');         // user just acted → working, clears any stale flag
     const p = clip(h.prompt, 80);
     window.souljaterm.rollLog('prompt', proj, p);
     if (/\broll\b/i.test(p)) chatToRoll(p);                          // user addressed Roll directly
-    else reactToPrompt(proj, clip(h.prompt, 240));                   // she reacts with personality, not a verbatim echo
+    else reactToPrompt(proj, clip(h.prompt, 240), evt.tab);          // she reacts with personality, not a verbatim echo
   } else if (name === 'PreToolUse') {
     markThinking(tabObj);
     // Results carry Roll's voice now — don't chatter about every tool *starting*.
     // The one "about to" beat worth flagging is spawning a subagent.
-    if (h.tool_name === 'Task') renderRoll({ expression: 'surprised', line: `${proj}: spinning up a subagent` });
+    if (h.tool_name === 'Task' && rollActive()) renderRoll({ expression: 'surprised', line: `${proj}: spinning up a subagent`, tab: evt.tab });
   } else if (name === 'PostToolUse') {
     markThinking(tabObj);
     const r = summarizeResult(h.tool_name, h.tool_input, h.tool_response);
@@ -391,12 +473,12 @@ function narrateClaude(evt) {
     // Real insight + LLM brain off cooldown ⇒ let Roll READ the result and react
     // to what it reveals. Otherwise drop the cheap scripted fact (free, throttled).
     if (r.notable && r.llm && now - _lastRollAt >= ROLL_COOLDOWN_MS) {
-      roll('insight', { project: proj, tool: h.tool_name, detail: r.detail || r.line, did: (toolBuffer[evt.tab] || []).slice(-8) });
+      roll('insight', { project: proj, tool: h.tool_name, detail: r.detail || r.line, did: (toolBuffer[evt.tab] || []).slice(-8), tab: evt.tab });
     } else if (r.notable) {
       const key = `${evt.tab}:${r.line}`;
       if (now - _microAt < 2500 || key === _microKey) return; // light throttle, no instant dupes
       _microAt = now; _microKey = key;
-      renderRoll({ expression: r.expr, line: `${proj}: ${r.line}` });
+      if (rollActive()) renderRoll({ expression: r.expr, line: `${proj}: ${r.line}`, tab: evt.tab });
     }
   } else if (name === 'Notification') {
     // Notification fires for real permission/answer prompts AND for plain idle nudges
@@ -404,11 +486,11 @@ function narrateClaude(evt) {
     // just a ❗ done-style ping. And if you're already on the tab, none of it applies —
     // no icon, no flash, no chirp.
     const msg = h.message || '';
-    const isQuestion = /permission|approve|grant|allow|confirm|respond|answer|choose|select|y\/n/i.test(msg);
+    const isQuestion = /permission|approve|grant|allow|confirm|respond|answer|choose|select|waiting|input|y\/n|\?/i.test(msg);
     const status = tabObj === active ? 'idle' : (isQuestion ? 'question' : 'done');
     setTabStatus(tabObj, status);
     window.souljaterm.rollLog('needs-you', proj, msg);
-    renderRoll({ expression: 'surprised', line: `${proj} needs you${msg ? ': ' + msg : ''}` });
+    if (rollActive()) renderRoll({ expression: 'surprised', line: `${proj} needs you${msg ? ': ' + msg : ''}`, tab: evt.tab, kind: 'attention' });
   } else if (name === 'Stop' || name === 'SubagentStop') {
     // Main Stop = turn's over: flag done (❗ + chirp) unless you're already watching this tab.
     // SubagentStop = a helper finished but the main turn rolls on, so keep the working badge.
@@ -421,7 +503,7 @@ function narrateClaude(evt) {
       let tr = { text: '', thinking: '' };
       try { tr = (await window.souljaterm.readTranscript(h.transcript_path)) || tr; } catch (_) {}
       window.souljaterm.rollLog('done', proj, tr.text || did.join(', '));
-      roll('done', { project: proj, did, summary: tr.text, thinking: tr.thinking });
+      roll('done', { project: proj, did, summary: tr.text, thinking: tr.thinking, tab: evt.tab });
     })();
   }
 }
@@ -436,11 +518,11 @@ window.souljaterm.onTranscriptLive(({ tab, thinking, text }) => {
   const now = Date.now();
   if (now - _thinkAt < 16000) return;
   _thinkAt = now;
-  roll('thinking', { project: tabName(tab) || '', detail: oneline(note).slice(0, 400) });
+  roll('thinking', { project: tabName(tab) || '', detail: oneline(note).slice(0, 400), tab });
 });
 
 // Periodic supportive reflection while there's activity (she reads her timestamped memory).
-setInterval(() => { if (tabs.length) roll('reflect', { project: active ? active.title : '' }); }, 25 * 60 * 1000);
+setInterval(() => { if (tabs.length) roll('reflect', { project: active ? active.title : '', tab: active ? active.id : undefined }); }, 25 * 60 * 1000);
 
 // Direct chat to Roll (chat bar, or a prompt that mentions her) — bypasses the cooldown.
 async function chatToRoll(message) {
@@ -456,17 +538,22 @@ window.souljaterm.onPopoutChat((msg) => chatToRoll(msg));
 // When the user fires off a prompt to Claude, Roll reacts to it with personality (brain reads the
 // task and riffs; brain-off falls back to a spirited canned line). Bypasses the LLM cooldown — a
 // fresh prompt is exactly the moment a reaction is wanted.
-async function reactToPrompt(project, prompt) {
+async function reactToPrompt(project, prompt, tab) {
+  if (!rollActive()) return;                         // minimized → no personality reaction (saves a brain call)
   try {
     const state = await window.souljaterm.rollSpeak({ kind: 'prompt', project, prompt, brain: currentBrain(), tabCount: tabs.length });
-    if (state && state.line) renderRoll(state);
+    if (state && state.line) renderRoll({ ...state, tab, kind: 'prompt' });
   } catch (_) {}
 }
 
 /* ---- sidebar ---- */
 async function loadSidebar() {
   const { root } = await window.souljaterm.homeInfo();
+  if (el.dirPick) { el.dirPick.textContent = prettyName(root); el.dirPick.title = `Sidebar folder: ${root} — click to change`; }
   const dirs = await window.souljaterm.listDir(root);
+  buildRainbow(dirs.map((d) => d.name));   // assign the rainbow A–Z before painting anything
+  tabs.forEach(paintTab);                  // recolor any already-open tabs to match
+  if (active) applyTint(active.cwd);
   el.dirList.innerHTML = '';
   for (const d of dirs) {
     const item = document.createElement('div');
@@ -482,9 +569,120 @@ function toggleSidebar() {
   requestAnimationFrame(() => active && active.fit.fit());
 }
 
+/* ---- first-run onboarding, rendered into the empty terminal ---- */
+function h(tag, attrs, ...kids) {           // tiny CSP-safe element builder (no innerHTML)
+  const e = document.createElement(tag);
+  for (const k in (attrs || {})) { if (k === 'class') e.className = attrs[k]; else e.setAttribute(k, attrs[k]); }
+  for (const c of kids) e.append(c && c.nodeType ? c : document.createTextNode(c == null ? '' : c));
+  return e;
+}
+function runInNewTab(cmd) {                  // open a session and type a command into it
+  const tab = newTab(active ? active.cwd : HOME);
+  setTimeout(() => window.souljaterm.input(tab.id, cmd + '\r'), 700); // let the shell draw its prompt first
+  return tab;
+}
+async function pickFolderThenReload() {
+  const info = await window.souljaterm.pickProjectsRoot();
+  if (info) await loadSidebar();
+  loadOnboarding();
+}
+function onboardStep(st) {
+  const row = h('div', { class: 'ob-step' },
+    h('span', { class: 'ob-mark ' + (st.ok ? 'ok' : 'no') }, st.mark || (st.ok ? '✓' : '•')),
+    h('div', { class: 'ob-body' },
+      h('div', { class: 'ob-title' }, st.title),
+      h('div', { class: 'ob-note' }, st.note || '')));
+  if (st.actions && st.actions.length) {
+    const acts = h('div', { class: 'ob-actions' });
+    for (const a of st.actions) { const b = h('button', { class: 'btn' }, a.label); b.addEventListener('click', a.run); acts.append(b); }
+    row.append(acts);
+  }
+  return row;
+}
+/* auto-updater banner (shown atop the empty-state, before any tab is opened) */
+let updateState = { state: 'none' };
+function updateCard() {
+  const s = updateState || {};
+  if (s.state === 'available') {
+    const btn = h('button', { class: 'btn big ob-update' }, `⤓ Update to v${s.version} & restart`);
+    btn.addEventListener('click', () => {
+      window.souljaterm.updateDownload();
+      updateState = { state: 'downloading', percent: 0 };
+      loadOnboarding();
+    });
+    return h('div', { class: 'ob-banner' }, h('div', { class: 'ob-bantxt' }, 'A new souljaterm is available!'), btn);
+  }
+  if (s.state === 'downloading') return h('div', { class: 'ob-banner' }, h('div', { class: 'ob-bantxt' }, `Downloading update… ${s.percent || 0}%`));
+  if (s.state === 'ready') return h('div', { class: 'ob-banner' }, h('div', { class: 'ob-bantxt' }, 'Update ready — restarting…'));
+  return null;
+}
+function initUpdates() {
+  if (!window.souljaterm.onUpdateStatus) return;
+  window.souljaterm.onUpdateStatus((s) => {
+    updateState = s || { state: 'none' };
+    if (updateState.state === 'ready') { window.souljaterm.updateInstall(); return; }   // they asked → relaunch into it
+    if (updateState.state === 'available' && rollActive())
+      renderRoll({ expression: 'surprised', line: `Ooh — souljaterm v${updateState.version} is out! Hit update.`, clip: 'mitete' });
+    loadOnboarding();
+  });
+  if (window.souljaterm.updateStatusGet)
+    window.souljaterm.updateStatusGet().then((s) => { if (s) { updateState = s; loadOnboarding(); } }).catch(() => {});
+}
+async function loadOnboarding() {
+  const host = document.getElementById('onboard');
+  if (!host) return;
+  let s; try { s = await window.souljaterm.setupStatus(); } catch (_) { return; }
+  const win = s.platform === 'win32';
+  const folderOk = !!(s.projectsRootSet || s.rootHasDirs);
+  const steps = [];
+
+  // 1. Claude Code CLI — one-button install + sign in if missing
+  steps.push(s.claude
+    ? { ok: true, title: 'Claude Code is ready', note: "Roll's CLI brain is good to go" }
+    : { ok: false, title: 'Install Claude Code', note: 'so you can code + Roll can think',
+        actions: [
+          { label: 'Install', run: () => runInNewTab(s.installCmd) },
+          { label: 'Sign in', run: () => runInNewTab(s.signinCmd) },
+        ] });
+
+  // Native Windows: Claude's Bash tool wants Git for Windows
+  if (win && !s.git) steps.push({ ok: false, title: 'Install Git for Windows', note: "Claude's Bash tool needs it",
+    actions: [{ label: 'Get Git', run: () => window.souljaterm.openExternal('https://git-scm.com/download/win') }] });
+
+  // 2. Projects folder
+  steps.push({ ok: folderOk, title: folderOk ? 'Projects folder set' : 'Pick your projects folder',
+    note: prettyName(s.root), actions: [{ label: 'Choose…', run: pickFolderThenReload }] });
+
+  // 3. Go
+  steps.push({ ok: false, mark: '▸', title: 'Open a session', note: 'pick a folder at left, or ⌘T',
+    actions: [{ label: 'New session', run: () => newTab(active ? active.cwd : HOME) }] });
+
+  const recheck = h('button', { class: 'btn ob-recheck' }, '↻ re-check');
+  recheck.addEventListener('click', loadOnboarding);
+  const upd = updateCard();
+  host.replaceChildren(
+    ...(upd ? [upd] : []),
+    h('h2', {}, 'SOULJATERM'),
+    h('div', { class: 'sub' }, s.claude && folderOk ? 'you’re set — jump in.' : 'let’s get you set up.'),
+    ...steps.map(onboardStep),
+    recheck,
+  );
+
+  // Roll nudges — only when something's actually missing, so she's not chatty once you're set up.
+  if (rollActive() && !(s.claude && folderOk)) {
+    renderRoll({
+      expression: 'happy', clip: null,
+      line: !s.claude ? 'Install Claude Code and sign in — then I can really think!'
+                      : 'Pick your projects folder and I’ll list them on the left!',
+    });
+  }
+}
+
 /* ---- assistant dock / popout ---- */
-el.assistantMin.addEventListener('click', () => el.app.classList.add('assistant-min'));
-el.assistantRestore.addEventListener('click', () => el.app.classList.remove('assistant-min'));
+// Minimizing reclaims her strip: refit so the terminal grows into it instead of leaving a black gap.
+function refitActive() { requestAnimationFrame(() => active && active.fit.fit()); }
+el.assistantMin.addEventListener('click', () => { el.app.classList.add('assistant-min'); refitActive(); });
+el.assistantRestore.addEventListener('click', () => { el.app.classList.remove('assistant-min'); refitActive(); });
 el.assistantPopout.addEventListener('click', () => window.souljaterm.popout());
 el.chatForm.addEventListener('submit', (e) => {
   e.preventDefault();
@@ -504,14 +702,40 @@ function initVoicePick() {
     try { localStorage.setItem('rollVoice', el.voicePick.value); } catch (_) {}
   });
 }
-window.souljaterm.onPopoutOpened(() => { el.app.classList.add('assistant-out'); renderRoll(lastRoll); });
-window.souljaterm.onPopoutClosed(() => el.app.classList.remove('assistant-out'));
+// Voice-clip volume (her recorded clips sit much hotter than the animalese, so this dials them
+// down/up to taste). Stored as rollClipVol 0..1; roll-face reads it on every clip.
+function initVoiceVol() {
+  if (!el.voiceVol) return;
+  let v = 0.3;
+  try { const s = localStorage.getItem('rollClipVol'); if (s != null && s !== '') v = parseFloat(s); } catch (_) {}
+  if (isNaN(v)) v = 0.3;
+  el.voiceVol.value = Math.round(Math.max(0, Math.min(1, v)) * 100);
+  el.voiceVol.addEventListener('input', () => {
+    try { localStorage.setItem('rollClipVol', String(el.voiceVol.value / 100)); } catch (_) {}
+  });
+}
+window.souljaterm.onPopoutOpened(() => {
+  poppedOut = true;
+  el.app.classList.add('assistant-out');
+  window.souljaterm.assistantRender({ ...lastRoll, instant: true }); // hand the current line over as-is, no re-typing
+});
+window.souljaterm.onPopoutClosed(() => {
+  poppedOut = false;
+  el.app.classList.remove('assistant-out');
+  rollFace.show(lastRoll);                                            // restore the docked face instantly
+});
 
 /* ---- wiring ---- */
 el.newTab.addEventListener('click', () => newTab(active ? active.cwd : HOME));
+if (el.dirPick) el.dirPick.addEventListener('click', async () => {
+  const info = await window.souljaterm.pickProjectsRoot(); // native folder dialog; null if cancelled
+  if (info) await loadSidebar();                            // re-list + recolor + relabel for the new root
+});
 el.sidebarToggle.addEventListener('click', toggleSidebar);
 el.sidebarShow.addEventListener('click', toggleSidebar);
 window.addEventListener('resize', () => active && active.fit.fit());
+
+document.body.classList.add(window.souljaterm.platform || 'darwin'); // lets CSS tune chrome per-OS
 
 (async function init() {
   const info = await window.souljaterm.homeInfo();
@@ -519,6 +743,9 @@ window.addEventListener('resize', () => active && active.fit.fit());
   initFontPicker();
   initBrainPicker();
   initVoicePick();
-  rollFace.speak(lastRoll);
+  initVoiceVol();
+  rollFace.intro(lastRoll);   // absent for a beat → "appear" clip + CRT warp-in → greeting
   await loadSidebar();
+  loadOnboarding();           // populate the empty-state setup checklist
+  initUpdates();              // check GitHub Releases; banner appears if a newer version exists
 })();

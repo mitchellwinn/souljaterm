@@ -48,7 +48,7 @@ html, body {
   height: 22px; display: flex; align-items: center; justify-content: space-between;
   padding: 0 4px 0 8px; -webkit-app-region: drag;
 }
-.sidebar-head { padding-left: 76px; }   /* clear traffic lights */
+body.darwin .sidebar-head { padding-left: 76px; }   /* clear macOS traffic lights (mac only) */
 .sidebar-title, #assistant-name { font-size: 10px; letter-spacing: 1px; font-weight: bold; }
 .sidebar-head .btn, .assistant-head .btn { -webkit-app-region: no-drag; padding: 0 5px; }
 #dir-list { overflow-y: auto; padding: 5px; flex: 1; background: var(--chrome); }
@@ -63,7 +63,7 @@ html, body {
 /* ---- main / tabs ---- */
 #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 #tabbar { height: 26px; flex: 0 0 26px; display: flex; align-items: stretch; -webkit-app-region: drag; gap: 3px; }
-#app.sidebar-collapsed #tabbar { padding-left: 76px; }
+body.darwin #app.sidebar-collapsed #tabbar { padding-left: 76px; }
 #sidebar-show { display: none; -webkit-app-region: no-drag; align-self: center; padding: 0 6px; }
 #app.sidebar-collapsed #sidebar-show { display: inline-flex; align-items: center; }
 #tab-list { display: flex; align-items: stretch; gap: 3px; overflow-x: auto; }
@@ -102,6 +102,9 @@ html, body {
    makes a classic one that reserves its own column. xterm's fit addon subtracts that width
    when sizing the grid, so terminal text stops at the bar instead of running underneath it. */
 .xterm-viewport::-webkit-scrollbar { width: 15px; }
+/* Always reserve the scrollbar gutter so xterm sizes the grid to leave room for it — otherwise the
+   bar only appears once output overflows and ends up drawn over the rightmost column. */
+.xterm-viewport { overflow-y: scroll; }
 .xterm-viewport::-webkit-scrollbar-track {
   /* recessed dithered gray, à la Win95 */
   background: repeating-conic-gradient(var(--chrome) 0 25%, var(--chrome-deep) 0 50%) 0 0 / 2px 2px;
@@ -149,6 +152,28 @@ html, body {
 #empty-art { margin: 0; font-size: 13px; line-height: 1.15; opacity: .85; text-shadow: 0 0 8px rgba(139,224,192,.25); }
 .empty-msg { display: none; }
 
+/* first-run onboarding card stack, shown in the empty terminal */
+.onboard { display: flex; flex-direction: column; gap: 9px; width: 320px; max-width: 84%; }
+.onboard h2 { margin: 0; font-size: 17px; letter-spacing: 3px; text-shadow: 0 0 9px rgba(139,224,192,.3); }
+.onboard .sub { font-size: 11px; opacity: .8; margin: -4px 0 2px; }
+.ob-step {
+  display: flex; align-items: center; gap: 9px; padding: 7px 9px; text-align: left;
+  background: #11141b; border: 2px solid; border-color: var(--dark) #2a2f3e #2a2f3e var(--dark);
+}
+.ob-mark { flex: 0 0 16px; text-align: center; font-size: 13px; }
+.ob-mark.ok { color: #9ece6a; } .ob-mark.no { color: #e0af68; }
+.ob-body { flex: 1; min-width: 0; }
+.ob-title { font-size: 12px; font-weight: bold; color: var(--lcd); }
+.ob-note { font-size: 10px; opacity: .7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ob-actions { display: flex; gap: 4px; flex: 0 0 auto; }
+.onboard .btn { font: 11px var(--mono-font); padding: 2px 8px; }
+.ob-recheck { align-self: flex-start; opacity: .85; }
+/* auto-update banner */
+.ob-banner { display: flex; flex-direction: column; gap: 7px; padding: 9px 11px; margin-bottom: 2px;
+  background: #16241a; border: 2px solid; border-color: #9ece6a #2a3a2a #2a3a2a #9ece6a; }
+.ob-bantxt { font-size: 12px; font-weight: bold; color: #c0f0a0; }
+.ob-update { align-self: flex-start; }
+
 /* ---- assistant (Roll) ---- */
 #assistant { width: 168px; flex: 0 0 168px; display: flex; flex-direction: column; }
 #app.assistant-out #assistant { display: none; }       /* popped out */
@@ -161,6 +186,19 @@ html, body {
 #face, #pop-face { flex: 0 0 auto; aspect-ratio: 1 / 1; width: 100%; padding: 0;
   display: flex; align-items: center; justify-content: center; overflow: hidden; }
 #face img, #pop-face img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+/* boot warp-in: she's hidden (.warp-pending), then powers on like a CRT/teleport (.warp-in).
+   #face clips overflow, so the brief horizontal stretch doesn't spill out of her box. */
+#face.warp-pending img { opacity: 0; }
+#face.warp-in img { animation: crtOn 1s ease-out; transform-origin: center center; }
+@keyframes crtOn {
+  0%   { opacity: 0; transform: scaleY(.006) scaleX(1.3); filter: brightness(7) saturate(0); }
+  10%  { opacity: 1; transform: scaleY(.006) scaleX(1.3); filter: brightness(7) saturate(0); }
+  35%  { transform: scaleY(.05) scaleX(1.05); filter: brightness(4) saturate(.4); }
+  60%  { transform: scaleY(1) scaleX(1); filter: brightness(2) saturate(1.6); }
+  70%  { filter: brightness(.5) saturate(1.2); }   /* flicker as it locks in */
+  82%  { filter: brightness(1.6); }
+  100% { transform: none; filter: none; opacity: 1; }
+}
 #face .placeholder, #pop-face .placeholder {
   color: var(--lcd); font: 11px var(--mono-font); text-align: center; white-space: pre-line; opacity: .85; }
 /* min-height:0 lets the flex child shrink below its content height so its own
@@ -177,11 +215,33 @@ html, body {
 #msg.typing::after, #pop-msg.typing::after { content: "▋"; animation: caret .6s steps(1) infinite; }
 @keyframes caret { 50% { opacity: 0; } }
 
+/* the tab Roll is currently talking about: a little colored, clickable header above her
+   message. Tinted to that tab's color, subtly flashes when she switches to a new one,
+   click to jump to the tab. */
+.msg-tab {
+  flex: 0 0 auto; -webkit-app-region: no-drag; -webkit-appearance: none;
+  display: block; width: 100%; text-align: left;
+  font: bold 10px var(--mono-font); letter-spacing: .5px;
+  color: var(--msg-tab-fg, #fff); background: var(--msg-tab-bg, #555);
+  border: 2px solid; border-color: var(--light) var(--darker) var(--darker) var(--light);
+  padding: 3px 8px; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-shadow: 0 1px 0 rgba(0,0,0,.35);
+}
+.msg-tab[hidden] { display: none; }
+.msg-tab::before { content: "▸ "; opacity: .8; }
+.msg-tab:hover { filter: brightness(1.12); }
+.msg-tab:active { border-color: var(--darker) var(--light) var(--light) var(--darker); }
+.msg-tab.flash { animation: msgTabFlash .5s ease-out 2; }
+@keyframes msgTabFlash { 0%, 100% { filter: brightness(1); } 40% { filter: brightness(1.75); } }
+
 /* settings footer */
 #sidebar-foot { display: flex; flex-direction: column; gap: 4px; padding: 6px; }
 .foot-row { display: flex; align-items: center; gap: 6px; }
 .foot-label { font-size: 9px; letter-spacing: 1px; font-weight: bold; width: 30px; }
-#font-picker, #roll-brain { flex: 1; font: 11px var(--mono-font); padding: 0 2px; min-width: 0; }
+#font-picker, #roll-brain, #dir-pick { flex: 1; font: 11px var(--mono-font); padding: 0 2px; min-width: 0; }
+#voice-vol { flex: 1; min-width: 0; accent-color: #9ece6a; height: 14px; }
+#dir-pick { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 
 #assistant-restore { position: fixed; right: 8px; bottom: 8px; display: none; z-index: 10;
   -webkit-app-region: no-drag; width: 30px; height: 30px; font-size: 15px; }

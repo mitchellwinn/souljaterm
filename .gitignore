@@ -5,3 +5,6 @@ dist/
 tools/venv/
 assets/roll/_cells/
 assets/roll/_contact.png
+
+# Local Netlify folder
+.netlify

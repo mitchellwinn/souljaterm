@@ -1,12 +1,29 @@
-const { app, BrowserWindow, ipcMain, session } = require('electron');
+const { app, BrowserWindow, ipcMain, session, dialog, shell } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const { execFile, spawn } = require('child_process');
 const net = require('net');
 const pty = require('node-pty');
+const { autoUpdater } = require('electron-updater');
 
-const shell = process.env.SHELL || '/bin/zsh';
+const isWin = process.platform === 'win32';
+const isMac = process.platform === 'darwin';
+// Per-platform login shell. Windows: PowerShell (always present). mac: zsh. Linux: $SHELL or bash.
+const SHELL = isWin
+  ? (process.env.SOULJATERM_SHELL || 'powershell.exe')
+  : (process.env.SHELL || (isMac ? '/bin/zsh' : '/bin/bash'));
+function shellArgs() {
+  if (!isWin) return ['-l'];                                  // login shell on unix
+  return /powershell|pwsh/i.test(SHELL) ? ['-NoLogo'] : [];   // cmd.exe takes none
+}
+// What to actually launch for a tab. Native shell by default; on Windows the user can opt into
+// WSL (settings.shell === 'wsl'), where `wsl --cd <dir>` starts the default distro in that folder
+// (WSL maps C:\… to /mnt/c/…). Roll's hook narration doesn't reach into WSL, so it's opt-in.
+function ptyCommand(dir) {
+  if (isWin && settings.shell === 'wsl') return { file: 'wsl.exe', args: ['--cd', dir || os.homedir()] };
+  return { file: SHELL, args: shellArgs() };
+}
 const ptys = new Map();
 let mainWin = null;
 let popout = null;
@@ -16,8 +33,11 @@ let sockServer = null;
 // Local socket that `souljaterm-notify` (run by Claude Code hooks) connects to.
 // Each line is a JSON event tagged with the originating tab; we forward to the UI.
 function startEventSocket() {
-  sockPath = path.join(os.tmpdir(), `souljaterm-${process.pid}.sock`);
-  try { fs.unlinkSync(sockPath); } catch (_) {}
+  // Windows uses a named pipe (not a filesystem socket); both speak the same net.Server API.
+  sockPath = isWin
+    ? `\\\\.\\pipe\\souljaterm-${process.pid}`
+    : path.join(os.tmpdir(), `souljaterm-${process.pid}.sock`);
+  if (!isWin) { try { fs.unlinkSync(sockPath); } catch (_) {} }
   sockServer = net.createServer((conn) => {
     let buf = '';
     conn.on('data', (d) => {
@@ -40,7 +60,7 @@ function startEventSocket() {
 
 /* ---- Roll's brain: Claude Haiku (low thinking) with scripted fallback ---- */
 const ROLL_EXPRESSIONS = ['neutral', 'happy', 'laugh', 'surprised', 'worried',
-  'sad', 'cry', 'angry', 'wink', 'blush', 'shocked'];
+  'sad', 'cry', 'angry', 'wink', 'blush', 'shocked', 'whine', 'mischievous'];
 // Roll's hard-coded canon + identity. Lives in the baseline system prompt, ABOVE the
 // user-editable memory, so the user can't edit or clear who she is. Source of truth:
 // https://megaman.fandom.com/wiki/Roll (classic Mega Man / Rockman series Roll).
@@ -127,14 +147,55 @@ const SCRIPTED = {
 
 // Locate the user's `claude` CLI via their login shell (GUI apps have a thin PATH).
 let claudeBin = null;
-function resolveClaude() {
+// Find an executable on the user's PATH — via their login shell on unix (GUI apps inherit a thin
+// PATH) or `where` on Windows. Resolves to the path string, or null if not found.
+function whichBin(name) {
   return new Promise((resolve) => {
-    execFile(shell, ['-lic', 'command -v claude'], { timeout: 6000 }, (err, stdout) => {
-      const p = (stdout || '').trim().split('\n').filter(Boolean).pop();
-      resolve(!err && p ? p : null);
-    });
+    if (isWin) {
+      execFile('where', [name], { timeout: 6000 }, (err, out) => {
+        const p = (out || '').trim().split(/\r?\n/).filter(Boolean)[0];     // first match
+        resolve(!err && p ? p : null);
+      });
+    } else {
+      execFile(SHELL, ['-lic', `command -v ${name}`], { timeout: 6000 }, (err, out) => {
+        const p = (out || '').trim().split('\n').filter(Boolean).pop();
+        resolve(!err && p ? p : null);
+      });
+    }
   });
 }
+const resolveClaude = () => whichBin('claude');
+
+// The official Claude Code installer, per platform (matches docs.claude.com/setup).
+function claudeInstallCmd() {
+  if (isWin && settings.shell !== 'wsl') return 'irm https://claude.ai/install.ps1 | iex';
+  return 'curl -fsSL https://claude.ai/install.sh | bash';
+}
+
+// First-run setup snapshot for the onboarding screen. Re-resolves `claude` live so it flips to
+// ready right after the user installs it. Git only really matters on native Windows (Bash tool).
+ipcMain.handle('setup-status', async () => {
+  claudeBin = await resolveClaude();
+  const git = isWin ? !!(await whichBin('git')) : true;
+  const root = projectsRoot();
+  let rootHasDirs = false;   // a folder is "fine" if it already has projects to list
+  try { rootHasDirs = fs.readdirSync(root, { withFileTypes: true }).some((d) => d.isDirectory() && !d.name.startsWith('.')); } catch (_) {}
+  return {
+    platform: process.platform,
+    claude: !!claudeBin,
+    git,
+    projectsRootSet: !!settings.projectsRoot,
+    rootHasDirs,
+    root,
+    installCmd: claudeInstallCmd(),
+    signinCmd: 'claude',
+  };
+});
+
+// Open a URL in the user's real browser (e.g. the Git-for-Windows download). http(s) only.
+ipcMain.on('open-external', (_e, url) => {
+  if (typeof url === 'string' && /^https?:\/\//i.test(url)) shell.openExternal(url);
+});
 
 function parseRoll(text, fallback) {
   const m = String(text).match(/\{[\s\S]*\}/);
@@ -169,7 +230,10 @@ const userPrompt = (event) =>
 function viaCli(event, fallback) {
   return new Promise((resolve) => {
     const args = ['-p', userPrompt(event), '--model', 'claude-haiku-4-5', '--append-system-prompt', brainSystem()];
-    const child = spawn(claudeBin, args, { cwd: os.homedir(), stdio: ['ignore', 'pipe', 'ignore'] });
+    // On Windows `claude` is often a .cmd shim, which Node will only launch through a shell.
+    // (A very long --append-system-prompt can exceed cmd's line limit and fail; that just falls
+    // back to a scripted line, so it degrades gracefully rather than breaking.)
+    const child = spawn(claudeBin, args, { cwd: os.homedir(), stdio: ['ignore', 'pipe', 'ignore'], shell: isWin, windowsHide: true });
     let out = '';
     const timer = setTimeout(() => { child.kill(); resolve(null); }, 25000);
     child.stdout.on('data', (d) => { out += d; });
@@ -320,13 +384,43 @@ function brainSystem() {
 ipcMain.handle('roll-memory', () => ({ notes: readNotes(), log: recentLog(30) }));
 ipcMain.on('roll-memory-clear', () => { try { fs.writeFileSync(notesPath, ''); fs.writeFileSync(logPath, ''); } catch (_) {} });
 
-// Default root for the directory sidebar: ~/Projects if it exists, else home.
-const projectsRoot = (() => {
+/* ---- user settings (persisted JSON in userData) ---- */
+let settingsPath = null;
+let settings = {};
+function initSettings() {
+  settingsPath = path.join(app.getPath('userData'), 'settings.json');
+  try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) || {}; } catch (_) { settings = {}; }
+}
+function saveSettings() { try { fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2)); } catch (_) {} }
+
+// Root for the directory sidebar. The user's chosen folder wins (as long as it still exists);
+// otherwise default to ~/Projects when present, else the home folder. The old hard-coded
+// ~/Projects only made sense on the original machine — anyone else picks their own.
+function defaultProjectsRoot() {
   const p = path.join(os.homedir(), 'Projects');
   try { return fs.statSync(p).isDirectory() ? p : os.homedir(); } catch { return os.homedir(); }
-})();
+}
+function projectsRoot() {
+  const r = settings.projectsRoot;
+  try { if (r && fs.statSync(r).isDirectory()) return r; } catch (_) {}
+  return defaultProjectsRoot();
+}
 
-ipcMain.handle('home-info', () => ({ home: os.homedir(), root: projectsRoot }));
+ipcMain.handle('home-info', () => ({ home: os.homedir(), root: projectsRoot() }));
+
+// Native folder picker so anyone can point the sidebar at their own projects directory.
+ipcMain.handle('pick-projects-root', async () => {
+  const parent = mainWin && !mainWin.isDestroyed() ? mainWin : undefined;
+  const res = await dialog.showOpenDialog(parent, {
+    title: 'Choose your projects folder',
+    properties: ['openDirectory', 'createDirectory'],
+    defaultPath: projectsRoot(),
+  });
+  if (res.canceled || !res.filePaths || !res.filePaths.length) return null;
+  settings.projectsRoot = res.filePaths[0];
+  saveSettings();
+  return { home: os.homedir(), root: projectsRoot() };
+});
 
 ipcMain.handle('list-dir', (_e, dir) => {
   try {
@@ -339,13 +433,33 @@ ipcMain.handle('list-dir', (_e, dir) => {
   }
 });
 
+/* ---- auto-update: packaged builds check GitHub Releases on launch ---- */
+let updateStatus = { state: app.isPackaged ? 'checking' : 'dev' };
+function sendUpdate(s) {
+  updateStatus = s;
+  if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('update-status', s);
+}
+function initAutoUpdate() {
+  if (!app.isPackaged) return;                  // electron-updater only works in packaged apps
+  autoUpdater.autoDownload = false;             // hold the download until the user hits the button
+  autoUpdater.on('update-available', (i) => sendUpdate({ state: 'available', version: i.version }));
+  autoUpdater.on('update-not-available', () => sendUpdate({ state: 'none' }));
+  autoUpdater.on('download-progress', (p) => sendUpdate({ state: 'downloading', percent: Math.round(p.percent || 0) }));
+  autoUpdater.on('update-downloaded', (i) => sendUpdate({ state: 'ready', version: i.version }));
+  autoUpdater.on('error', () => sendUpdate({ state: 'none' }));
+  autoUpdater.checkForUpdates().catch(() => sendUpdate({ state: 'none' }));
+}
+ipcMain.handle('update-status-get', () => updateStatus);
+ipcMain.on('update-download', () => { try { autoUpdater.downloadUpdate(); } catch (_) {} });
+ipcMain.on('update-install', () => { try { autoUpdater.quitAndInstall(); } catch (_) {} });
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1100,
     height: 720,
     minWidth: 480,
     minHeight: 320,
-    titleBarStyle: 'hiddenInset',
+    titleBarStyle: isMac ? 'hiddenInset' : 'default', // native frame + window controls off mac
     backgroundColor: '#16161e',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -358,11 +472,13 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'src', 'index.html'));
 
   ipcMain.on('pty-spawn', (_e, { id, cwd, cols, rows }) => {
-    const p = pty.spawn(shell, ['-l'], {
+    const dir = cwd || os.homedir();
+    const cmd = ptyCommand(dir);
+    const p = pty.spawn(cmd.file, cmd.args, {
       name: 'xterm-256color',
       cols: cols || 80,
       rows: rows || 24,
-      cwd: cwd || os.homedir(),
+      cwd: dir,
       env: {
         ...process.env,
         TERM: 'xterm-256color',
@@ -412,15 +528,23 @@ function createWindow() {
     if (popout && !popout.isDestroyed()) { popout.focus(); return; }
     popout = new BrowserWindow({
       width: 230, height: 392, resizable: false, alwaysOnTop: true,
-      titleBarStyle: 'hiddenInset', backgroundColor: '#0e1015',
+      ...(isMac ? { titleBarStyle: 'hiddenInset' } : { frame: false }), // off mac: frameless, its own head drags
+      backgroundColor: '#0e1015',
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
         contextIsolation: true,
         autoplayPolicy: 'no-user-gesture-required',
       },
     });
+    // Float above everything, including other apps' macOS full-screen spaces.
+    popout.setAlwaysOnTop(true, 'screen-saver');
+    popout.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     popout.loadFile(path.join(__dirname, 'src', 'assistant.html'));
-    if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('popout-opened');
+    // Only hand off once the pop-out has loaded its listeners, so the first (instant)
+    // state sync doesn't fire into a page that isn't ready to receive it.
+    popout.webContents.once('did-finish-load', () => {
+      if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('popout-opened');
+    });
     popout.on('closed', () => {
       popout = null;
       if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('popout-closed');
@@ -440,6 +564,7 @@ app.whenReady().then(async () => {
   const grant = (perm) => ['media', 'mediaKeySystem', 'speaker-selection', 'audioCapture'].includes(perm);
   session.defaultSession.setPermissionRequestHandler((_wc, perm, cb) => cb(grant(perm)));
   session.defaultSession.setPermissionCheckHandler((_wc, perm) => grant(perm));
+  initSettings();
   initMemory();
   startEventSocket();
   claudeBin = await resolveClaude();
@@ -448,10 +573,11 @@ app.whenReady().then(async () => {
     try { app.dock.setIcon(iconPath); } catch (_) { /* non-fatal */ }
   }
   createWindow();
+  initAutoUpdate();
 });
 app.on('will-quit', () => {
   try { sockServer && sockServer.close(); } catch (_) {}
-  try { sockPath && fs.unlinkSync(sockPath); } catch (_) {}
+  try { if (sockPath && !isWin) fs.unlinkSync(sockPath); } catch (_) {} // named pipes self-clean
   for (const rec of watchers.values()) { try { rec.watcher && rec.watcher.close(); } catch (_) {} }
 });
 app.on('window-all-closed', () => app.quit());
