@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>souljaterm</title>
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar" class="panel-raised">
+      <div class="sidebar-head bevel-title">
+        <span class="sidebar-title">DISK</span>
+        <button id="sidebar-toggle" class="btn" title="Toggle sidebar (⌘B)">‹</button>
+      </div>
+      <div id="dir-list"></div>
+      <div id="sidebar-foot" class="bevel-title">
+        <div class="foot-row"><span class="foot-label">FONT</span><select id="font-picker" class="btn"></select></div>
+        <div class="foot-row"><span class="foot-label">ROLL</span><select id="roll-brain" class="btn"></select></div>
+      </div>
+    </aside>
+
+    <main id="main">
+      <div id="tabbar">
+        <div id="tab-list"></div>
+        <button id="new-tab" class="btn" title="New tab (⌘T)">＋</button>
+      </div>
+      <div id="terminals">
+        <div id="empty-state">
+          <pre id="empty-art"></pre>
+          <div class="empty-msg">no session — pick a folder, or ⌘T</div>
+        </div>
+      </div>
+    </main>
+
+    <aside id="assistant" class="panel-raised">
+      <div class="assistant-head bevel-title">
+        <span id="assistant-name">ROLL</span>
+        <span style="-webkit-app-region: no-drag; display:flex; gap:3px;">
+          <button id="assistant-popout" class="btn" title="Pop out">⇱</button>
+          <button id="assistant-min" class="btn" title="Minimize">▁</button>
+        </span>
+      </div>
+      <div id="assistant-body">
+        <div id="face" class="lcd"></div>
+        <div id="msg" class="lcd lcd-text"></div>
+      </div>
+    </aside>
+    <button id="assistant-restore" class="btn" title="Show Term-tan">☻</button>
+  </div>
+
+  <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
+  <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+  <script src="../node_modules/@xterm/addon-webgl/lib/addon-webgl.js"></script>
+  <script src="roll-anim.js"></script>
+  <script src="roll-face.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

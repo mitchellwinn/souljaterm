@@ -1,0 +1,59 @@
+{
+  "name": "souljaterm",
+  "version": "0.1.0",
+  "description": "A custom terminal for vibing in Claude Code",
+  "author": "mitchellwinn",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mitchellwinn/souljaterm.git"
+  },
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "rebuild": "electron-rebuild -f -w node-pty",
+    "install-hooks": "node tools/install-hooks.js",
+    "uninstall-hooks": "node tools/install-hooks.js uninstall",
+    "postinstall": "electron-rebuild -f -w node-pty",
+    "dist": "electron-builder",
+    "pack": "electron-builder --dir"
+  },
+  "build": {
+    "appId": "com.souljaterm.app",
+    "productName": "souljaterm",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "bin/**/*",
+      "assets/icon.icns",
+      "assets/icon.png",
+      "assets/roll/frames/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/node_modules/node-pty/**"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/icon.icns",
+      "target": [
+        "dmg",
+        "dir"
+      ]
+    }
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.7.0",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-webgl": "^0.18.0",
+    "@xterm/xterm": "^5.5.0",
+    "node-pty": "^1.0.0"
+  }
+}
