@@ -1,8 +1,11 @@
 {
   "name": "souljaterm",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A custom terminal for vibing in Claude Code",
-  "author": "mitchellwinn",
+  "author": {
+    "name": "mitchellwinn",
+    "email": "mitchellswinn@gmail.com"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/mitchellwinn/souljaterm.git"
@@ -60,7 +63,7 @@
           "arch": "universal"
         },
         {
-          "target": "dir",
+          "target": "zip",
           "arch": "universal"
         }
       ]
