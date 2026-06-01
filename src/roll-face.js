@@ -20,6 +20,7 @@
       this.animTimer = null;
       this.typeTimer = null;
       this.settleTimer = null;
+      this.queue = [];                       // lines waiting their turn (never interrupts the current one)
       this.play('idle');
       this._initAudio();
     }
@@ -148,8 +149,19 @@
       if (this.settleTimer) { clearTimeout(this.settleTimer); this.settleTimer = null; }
     }
 
+    // Public entry: never cut off a line that's mid-type. If she's talking (or lines are
+    // already waiting), queue this one and let the current finish + breathe first.
     speak(state) {
       if (!state || !state.line) return;
+      if (this.talking || this.queue.length) {
+        if (this.queue.length >= 4) this.queue.shift(); // keep the backlog recent, not infinite
+        this.queue.push(state);
+        return;
+      }
+      this._startSpeak(state);
+    }
+
+    _startSpeak(state) {
       this._clear();
       this.talking = true;
       const expr = NAMES.includes(state.expression) ? state.expression : 'neutral';
@@ -176,7 +188,12 @@
       this.talking = false;
       this.msgEl.classList.remove('typing');
       this.play(expr);                       // settle on the emotion
-      this.settleTimer = setTimeout(() => { if (!this.talking) this.play('idle'); }, 2000);
+      if (this.queue.length) {
+        // hold the finished line on screen at least half a second, then type the next one
+        this.settleTimer = setTimeout(() => { this._startSpeak(this.queue.shift()); }, 500);
+      } else {
+        this.settleTimer = setTimeout(() => { if (!this.talking) this.play('idle'); }, 2000);
+      }
     }
   }
 

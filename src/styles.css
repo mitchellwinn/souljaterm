@@ -78,7 +78,10 @@ html, body {
   font-weight: bold; font-size: 11px;
 }
 .tab .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 0 rgba(0,0,0,.35); }
-.tab .close { margin-left: auto; opacity: .55; font-size: 13px; line-height: 1; padding: 0 2px; }
+/* state badge: rides the right edge next to ×, never pushes the label. Empty = zero-width.
+   margin-left:auto stays here (not on .close) so × is right-anchored whether or not a badge shows. */
+.tab .status { margin-left: auto; font-size: 11px; line-height: 1; }
+.tab .close { opacity: .55; font-size: 13px; line-height: 1; padding: 0 2px; }
 .tab .close:hover { opacity: 1; }
 .tab.active { background: var(--tab-bg-active, #aaa); padding-top: 2px; }
 .tab.attention { animation: flash .7s steps(2, jump-none) infinite; }

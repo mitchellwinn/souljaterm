@@ -112,6 +112,17 @@ const SCRIPTED = {
   error: (c) => ({ expression: 'worried', line: `${c.project} hit a snag${c.detail ? ': ' + c.detail : ''}.` }),
   reflect: () => ({ expression: 'happy', line: "You've been at it a while — nice focus. Keep it up!" }),
   chat: () => ({ expression: 'happy', line: "I'm here! Turn my brain on (CLI/API) and I can really chat." }),
+  // brain off: react with spirit instead of parroting the prompt. Varies by prompt length so it's not one stock line.
+  prompt: (c) => {
+    const lines = [
+      "Ooh, a fresh task — let's get into it!",
+      "On it! This'll be fun.",
+      "Alright, rolling up my sleeves for this one.",
+      "Here we go — I love a new project!",
+      "Ready when you are! Let's make it happen.",
+    ];
+    return { expression: 'happy', line: lines[String(c.prompt || '').length % lines.length] };
+  },
 };
 
 // Locate the user's `claude` CLI via their login shell (GUI apps have a thin PATH).
@@ -143,6 +154,12 @@ const userPrompt = (event) =>
   event && event.kind === 'chat'
     ? `The user is talking to you directly. They said: ${JSON.stringify(event.message || '')}. `
       + `Reply to them in character. Reply ONLY as JSON {"expression":..,"line":..}.`
+    : event && event.kind === 'prompt'
+    ? `The user just handed Claude a new instruction (they did NOT say this to you): ${JSON.stringify(event.prompt || '')}. `
+      + `React to it OUT LOUD in character, with personality — show how you FEEL about the task: excited, curious, `
+      + `impressed ("ooh, that's a meaty one"), playfully teasing, or warmly supportive, whatever fits what they asked. `
+      + `You may nod at what it's about, but do NOT just parrot their words back. One short, lively sentence. `
+      + `Don't ask them anything. Reply ONLY as JSON {"expression":..,"line":..}.`
     : `Automated notification from the user's dev tools/hooks (NOT a message from the user): `
       + `${JSON.stringify(event)}. Relay/narrate this to the user in character — do not address it as if `
       + `the user spoke, and do not ask them anything. Reply ONLY as JSON {"expression":..,"line":..}.`;

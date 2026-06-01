@@ -99,12 +99,12 @@ function newTab(cwd) {
     catch (_) { /* fall back to canvas */ }
   }
 
-  const tab = { id, term, fit, host, cwd, title: prettyName(cwd), el: null };
+  const tab = { id, term, fit, host, cwd, title: prettyName(cwd), el: null, status: 'idle' };
   tabs.push(tab);
 
   const tabEl = document.createElement('div');
   tabEl.className = 'tab';
-  tabEl.innerHTML = '<span class="label"></span><span class="close">×</span>';
+  tabEl.innerHTML = '<span class="label"></span><span class="status"></span><span class="close">×</span>';
   tabEl.addEventListener('click', (e) => {
     if (e.target.classList.contains('close')) closeTab(tab); else activate(tab);
   });
@@ -182,9 +182,67 @@ function closeTab(tab) {
   }
 }
 
+/* ---- per-tab state badge (left of ×) + chiptune alert ----
+   idle      → nothing
+   thinking  → ⚠️  Claude is working in that session
+   done      → ❗  finished its turn while you were elsewhere (flashes + chirps)
+   question  → ‼️  waiting on you to answer/permit something (flashes + chirps)
+   The badge shows on any tab; the flash + sound only fire when it's NOT the active tab. */
+const TAB_STATUS = {
+  idle:     { icon: '',     flash: false },
+  thinking: { icon: '⚠️',  flash: false },
+  done:     { icon: '❗',  flash: true, sfx: 'done' },
+  question: { icon: '‼️',  flash: true, sfx: 'question' },
+};
+function setTabStatus(tab, name) {
+  if (!tab || !tab.el || tab.status === name) return;
+  const s = TAB_STATUS[name] || TAB_STATUS.idle;
+  tab.status = name;
+  const dot = tab.el.querySelector('.status');
+  if (dot) dot.textContent = s.icon;
+  const alert = s.flash && tab !== active;
+  tab.el.classList.toggle('attention', alert);
+  if (alert && s.sfx) sfx(s.sfx);            // every call here is a fresh transition → chirp once
+}
+// Streaming thinking events must never stomp a done/question flag the user hasn't seen yet.
+function markThinking(tab) {
+  if (tab && (tab.status === 'idle' || tab.status === 'thinking')) setTabStatus(tab, 'thinking');
+}
+function clearAttention(tab) {
+  if (!tab || !tab.el) return;
+  tab.el.classList.remove('attention');
+  if (tab.status === 'done' || tab.status === 'question') setTabStatus(tab, 'idle'); // user looked → handled
+}
+
+// Retro chiptune blips (square waves, snappy envelope) — a Mega-Man-ish system chirp, synthesized
+// so we ship no copyrighted audio. Honors the same mute switch as Roll's voice.
+let _sfxCtx = null;
+function sfx(kind) {
+  try { if (localStorage.getItem('rollVoice') === 'off') return; } catch (_) {}
+  if (!_sfxCtx) {
+    const C = window.AudioContext || window.webkitAudioContext;
+    if (!C) return;
+    try { _sfxCtx = new C(); } catch (_) { return; }
+  }
+  const ctx = _sfxCtx;
+  if (ctx.state === 'suspended') ctx.resume();
+  const seq = kind === 'question'
+    ? [[660, 0], [660, 0.12], [988, 0.24]]   // insistent triple, rising — "answer me"
+    : [[784, 0], [1175, 0.10]];              // quick two-note ping — "done"
+  for (const [freq, at] of seq) {
+    const t = ctx.currentTime + at;
+    const o = ctx.createOscillator(); o.type = 'square'; o.frequency.value = freq;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.06, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.11);
+    o.connect(g).connect(ctx.destination);
+    o.start(t); o.stop(t + 0.12);
+  }
+}
+
 // Bells just flash the tab — they carry no info worth narrating, so Roll stays quiet.
 function flagAttention(tab) { if (tab !== active) tab.el.classList.add('attention'); }
-function clearAttention(tab) { tab && tab.el && tab.el.classList.remove('attention'); }
 
 /* ---- pty -> terminal ---- */
 window.souljaterm.onData(({ id, data }) => {
@@ -293,17 +351,21 @@ function narrateClaude(evt) {
   const h = evt.hook || {};
   const name = h.hook_event_name;
   const proj = tabName(evt.tab) || evt.project || 'a session';
+  const tabObj = tabs.find((t) => t.id === evt.tab);
   if (h.transcript_path) window.souljaterm.watchTranscript(h.transcript_path, evt.tab); // live thinking
   if (name === 'UserPromptSubmit') {
+    setTabStatus(tabObj, 'thinking');         // user just acted → working, clears any stale flag
     const p = clip(h.prompt, 80);
     window.souljaterm.rollLog('prompt', proj, p);
     if (/\broll\b/i.test(p)) chatToRoll(p);                          // user addressed Roll directly
-    else renderRoll({ expression: 'happy', line: `on it${p ? ': ' + clip(p, 56) : ''}` });
+    else reactToPrompt(proj, clip(h.prompt, 240));                   // she reacts with personality, not a verbatim echo
   } else if (name === 'PreToolUse') {
+    markThinking(tabObj);
     // Results carry Roll's voice now — don't chatter about every tool *starting*.
     // The one "about to" beat worth flagging is spawning a subagent.
     if (h.tool_name === 'Task') renderRoll({ expression: 'surprised', line: `${proj}: spinning up a subagent` });
   } else if (name === 'PostToolUse') {
+    markThinking(tabObj);
     const r = summarizeResult(h.tool_name, h.tool_input, h.tool_response);
     if (!r.line) return;
     (toolBuffer[evt.tab] || (toolBuffer[evt.tab] = [])).push(r.line);
@@ -320,9 +382,14 @@ function narrateClaude(evt) {
       renderRoll({ expression: r.expr, line: `${proj}: ${r.line}` });
     }
   } else if (name === 'Notification') {
+    setTabStatus(tabObj, 'question');          // ‼️ blocked on the user — answer/permission needed
     window.souljaterm.rollLog('needs-you', proj, h.message || '');
     renderRoll({ expression: 'surprised', line: `${proj} needs you${h.message ? ': ' + h.message : ''}` });
   } else if (name === 'Stop' || name === 'SubagentStop') {
+    // Main Stop = turn's over: flag done (❗ + chirp) unless you're already watching this tab.
+    // SubagentStop = a helper finished but the main turn rolls on, so keep the working badge.
+    if (name === 'Stop') setTabStatus(tabObj, tabObj === active ? 'idle' : 'done');
+    else markThinking(tabObj);
     const did = (toolBuffer[evt.tab] || []).slice(-8);
     toolBuffer[evt.tab] = [];
     (async () => {
@@ -338,6 +405,7 @@ window.souljaterm.onClaudeEvent(narrateClaude);
 
 // Live thinking as Claude writes it to the transcript (throttled; needs her brain on).
 window.souljaterm.onTranscriptLive(({ tab, thinking, text }) => {
+  markThinking(tabs.find((t) => t.id === tab));   // badge follows real activity even with her brain off
   if (currentBrain() === 'off') return;
   const note = thinking || text;
   if (!note) return;
@@ -360,6 +428,16 @@ async function chatToRoll(message) {
   } catch (_) {}
 }
 window.souljaterm.onPopoutChat((msg) => chatToRoll(msg));
+
+// When the user fires off a prompt to Claude, Roll reacts to it with personality (brain reads the
+// task and riffs; brain-off falls back to a spirited canned line). Bypasses the LLM cooldown — a
+// fresh prompt is exactly the moment a reaction is wanted.
+async function reactToPrompt(project, prompt) {
+  try {
+    const state = await window.souljaterm.rollSpeak({ kind: 'prompt', project, prompt, brain: currentBrain(), tabCount: tabs.length });
+    if (state && state.line) renderRoll(state);
+  } catch (_) {}
+}
 
 /* ---- sidebar ---- */
 async function loadSidebar() {
