@@ -18,4 +18,12 @@ contextBridge.exposeInMainWorld('souljaterm', {
   onPopoutClosed: (cb) => ipcRenderer.on('popout-closed', () => cb()),
   onAssistantState: (cb) => ipcRenderer.on('assistant-state', (_e, s) => cb(s)),
   onClaudeEvent: (cb) => ipcRenderer.on('claude-event', (_e, evt) => cb(evt)),
+  readTranscript: (p) => ipcRenderer.invoke('read-transcript', p),
+  watchTranscript: (p, tab) => ipcRenderer.send('watch-transcript', { path: p, tab }),
+  onTranscriptLive: (cb) => ipcRenderer.on('transcript-live', (_e, d) => cb(d)),
+  rollLog: (kind, project, text) => ipcRenderer.send('roll-log', { kind, project, text }),
+  memory: () => ipcRenderer.invoke('roll-memory'),
+  clearMemory: () => ipcRenderer.send('roll-memory-clear'),
+  popoutChat: (msg) => ipcRenderer.send('popout-chat-send', msg),
+  onPopoutChat: (cb) => ipcRenderer.on('popout-chat', (_e, msg) => cb(msg)),
 });

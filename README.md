@@ -2,6 +2,13 @@
 
 A custom terminal for vibing in Claude Code. Electron + xterm.js + node-pty.
 
+## Download
+
+**[⬇ Download the latest release](https://github.com/mitchellwinn/souljaterm/releases/latest)** — macOS (Intel + Apple Silicon).
+
+The app isn't code-signed yet, so on first launch right-click it → **Open** →
+**Open** to get past Gatekeeper (only needed once).
+
 ## Run
 
 ```bash

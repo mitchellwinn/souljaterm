@@ -39,9 +39,20 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "assets/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "identity": "souljaterm-dev",
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
       "target": [
-        "dmg",
-        "dir"
+        {
+          "target": "dmg",
+          "arch": "universal"
+        },
+        {
+          "target": "dir",
+          "arch": "universal"
+        }
       ]
     }
   },

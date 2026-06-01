@@ -19,6 +19,8 @@
       <div id="sidebar-foot" class="bevel-title">
         <div class="foot-row"><span class="foot-label">FONT</span><select id="font-picker" class="btn"></select></div>
         <div class="foot-row"><span class="foot-label">ROLL</span><select id="roll-brain" class="btn"></select></div>
+        <div class="foot-row"><span class="foot-label">VOICE</span><select id="voice-pick" class="btn"><option value="on">on</option><option value="off">off</option></select></div>
+        <div class="foot-row"><span class="foot-label">MEM</span><button id="mem-clear" class="btn">clear memory</button></div>
       </div>
     </aside>
 
@@ -46,6 +48,9 @@
       <div id="assistant-body">
         <div id="face" class="lcd"></div>
         <div id="msg" class="lcd lcd-text"></div>
+        <form id="chat-form" autocomplete="off">
+          <input id="chat-input" type="text" placeholder="talk to Roll…" />
+        </form>
       </div>
     </aside>
     <button id="assistant-restore" class="btn" title="Show Term-tan">☻</button>

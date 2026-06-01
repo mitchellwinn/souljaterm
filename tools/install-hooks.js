@@ -9,7 +9,7 @@ const os = require('os');
 
 const NOTIFY = path.join(__dirname, '..', 'bin', 'souljaterm-notify.js');
 const CMD = `node ${NOTIFY}`;
-const EVENTS = ['PreToolUse', 'Notification', 'Stop', 'SubagentStop'];
+const EVENTS = ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop', 'SubagentStop'];
 const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
 const uninstall = process.argv[2] === 'uninstall';
 

@@ -21,6 +21,10 @@ const el = {
   msg: document.getElementById('msg'),
   fontPicker: document.getElementById('font-picker'),
   rollBrain: document.getElementById('roll-brain'),
+  voicePick: document.getElementById('voice-pick'),
+  memClear: document.getElementById('mem-clear'),
+  chatForm: document.getElementById('chat-form'),
+  chatInput: document.getElementById('chat-input'),
   assistantMin: document.getElementById('assistant-min'),
   assistantPopout: document.getElementById('assistant-popout'),
   assistantRestore: document.getElementById('assistant-restore'),
@@ -130,6 +134,7 @@ function newTab(cwd) {
 
   el.app.classList.add('has-tabs');
   activate(tab);
+  window.souljaterm.rollLog('session', tab.title, 'opened');
   roll('session_open', { project: tab.title });
   return tab;
 }
@@ -220,14 +225,10 @@ function initBrainPicker() {
 // Cooldown for LLM summaries (free micro-narration below isn't gated by this).
 const ROLL_COOLDOWN_MS = 8000;
 let _lastRollAt = 0;
-let _lastRollKey = '';
 async function roll(kind, ctx) {
-  const key = `${kind}:${(ctx && ctx.project) || ''}`;
   const now = Date.now();
-  if (now - _lastRollAt < ROLL_COOLDOWN_MS) return;                 // global cooldown
-  if (key === _lastRollKey && now - _lastRollAt < ROLL_COOLDOWN_MS * 4) return; // no repeats
+  if (now - _lastRollAt < ROLL_COOLDOWN_MS) return; // global cooldown on LLM lines
   _lastRollAt = now;
-  _lastRollKey = key;
   try {
     const state = await window.souljaterm.rollSpeak({ kind, ...ctx, brain: currentBrain(), tabCount: tabs.length });
     if (state && state.line) renderRoll(state);
@@ -287,11 +288,18 @@ function summarizeResult(name, input, response) {
 const toolBuffer = {};            // tab id -> recent RESULT summaries (what came back, not what ran)
 let _microAt = 0;
 let _microKey = '';
+let _thinkAt = 0;
 function narrateClaude(evt) {
   const h = evt.hook || {};
   const name = h.hook_event_name;
   const proj = tabName(evt.tab) || evt.project || 'a session';
-  if (name === 'PreToolUse') {
+  if (h.transcript_path) window.souljaterm.watchTranscript(h.transcript_path, evt.tab); // live thinking
+  if (name === 'UserPromptSubmit') {
+    const p = clip(h.prompt, 80);
+    window.souljaterm.rollLog('prompt', proj, p);
+    if (/\broll\b/i.test(p)) chatToRoll(p);                          // user addressed Roll directly
+    else renderRoll({ expression: 'happy', line: `on it${p ? ': ' + clip(p, 56) : ''}` });
+  } else if (name === 'PreToolUse') {
     // Results carry Roll's voice now — don't chatter about every tool *starting*.
     // The one "about to" beat worth flagging is spawning a subagent.
     if (h.tool_name === 'Task') renderRoll({ expression: 'surprised', line: `${proj}: spinning up a subagent` });
@@ -312,14 +320,46 @@ function narrateClaude(evt) {
       renderRoll({ expression: r.expr, line: `${proj}: ${r.line}` });
     }
   } else if (name === 'Notification') {
+    window.souljaterm.rollLog('needs-you', proj, h.message || '');
     renderRoll({ expression: 'surprised', line: `${proj} needs you${h.message ? ': ' + h.message : ''}` });
   } else if (name === 'Stop' || name === 'SubagentStop') {
     const did = (toolBuffer[evt.tab] || []).slice(-8);
     toolBuffer[evt.tab] = [];
-    roll('done', { project: proj, did }); // LLM summary — now of RESULTS, not tool names
+    (async () => {
+      // read Claude's actual final words + thinking so the summary is real, not guessed
+      let tr = { text: '', thinking: '' };
+      try { tr = (await window.souljaterm.readTranscript(h.transcript_path)) || tr; } catch (_) {}
+      window.souljaterm.rollLog('done', proj, tr.text || did.join(', '));
+      roll('done', { project: proj, did, summary: tr.text, thinking: tr.thinking });
+    })();
   }
 }
 window.souljaterm.onClaudeEvent(narrateClaude);
+
+// Live thinking as Claude writes it to the transcript (throttled; needs her brain on).
+window.souljaterm.onTranscriptLive(({ tab, thinking, text }) => {
+  if (currentBrain() === 'off') return;
+  const note = thinking || text;
+  if (!note) return;
+  const now = Date.now();
+  if (now - _thinkAt < 16000) return;
+  _thinkAt = now;
+  roll('thinking', { project: tabName(tab) || '', detail: oneline(note).slice(0, 400) });
+});
+
+// Periodic supportive reflection while there's activity (she reads her timestamped memory).
+setInterval(() => { if (tabs.length) roll('reflect', { project: active ? active.title : '' }); }, 25 * 60 * 1000);
+
+// Direct chat to Roll (chat bar, or a prompt that mentions her) — bypasses the cooldown.
+async function chatToRoll(message) {
+  if (!message || !message.trim()) return;
+  renderRoll({ expression: 'talk', line: '...' });
+  try {
+    const state = await window.souljaterm.rollSpeak({ kind: 'chat', message, brain: currentBrain(), tabCount: tabs.length });
+    if (state && state.line) renderRoll(state);
+  } catch (_) {}
+}
+window.souljaterm.onPopoutChat((msg) => chatToRoll(msg));
 
 /* ---- sidebar ---- */
 async function loadSidebar() {
@@ -344,6 +384,24 @@ function toggleSidebar() {
 el.assistantMin.addEventListener('click', () => el.app.classList.add('assistant-min'));
 el.assistantRestore.addEventListener('click', () => el.app.classList.remove('assistant-min'));
 el.assistantPopout.addEventListener('click', () => window.souljaterm.popout());
+el.chatForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const v = el.chatInput.value;
+  el.chatInput.value = '';
+  chatToRoll(v);
+});
+el.memClear.addEventListener('click', () => {
+  window.souljaterm.clearMemory();
+  renderRoll({ expression: 'neutral', line: 'memory cleared — fresh start!' });
+});
+function initVoicePick() {
+  let v = 'on';
+  try { v = localStorage.getItem('rollVoice') || 'on'; } catch (_) {}
+  el.voicePick.value = v;
+  el.voicePick.addEventListener('change', () => {
+    try { localStorage.setItem('rollVoice', el.voicePick.value); } catch (_) {}
+  });
+}
 window.souljaterm.onPopoutOpened(() => { el.app.classList.add('assistant-out'); renderRoll(lastRoll); });
 window.souljaterm.onPopoutClosed(() => el.app.classList.remove('assistant-out'));
 
@@ -357,6 +415,7 @@ window.addEventListener('resize', () => active && active.fit.fit());
   HOME = info.home;
   initFontPicker();
   initBrainPicker();
+  initVoicePick();
   rollFace.speak(lastRoll);
   await loadSidebar();
 })();
