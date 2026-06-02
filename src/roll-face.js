@@ -123,6 +123,14 @@
       }
     }
 
+    // Animalese blip peak gain. User-adjustable via localStorage 'rollBlipVol' (0..1) so it can be
+    // balanced against the recorded clips; default 0.55 maps to the original ~0.038 peak.
+    _blipVol() {
+      let v = 0.55;
+      try { const s = localStorage.getItem('rollBlipVol'); if (s != null && s !== '') v = parseFloat(s); } catch (_) {}
+      return isNaN(v) ? 0.55 : Math.max(0, Math.min(1, v));
+    }
+
     // Emit one animalese blip at `freq` into a single AudioContext.
     _tone(ctx, freq) {
       if (ctx.state === 'suspended') ctx.resume();
@@ -130,9 +138,10 @@
       // soft lowpass for a rounded, non-buzzy tone
       const lp = ctx.createBiquadFilter();
       lp.type = 'lowpass'; lp.frequency.value = 2400; lp.Q.value = 0.7;
+      const peak = Math.max(0.0002, 0.07 * this._blipVol());
       const g = ctx.createGain();
       g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(0.038, t + 0.012); // gentle attack
+      g.gain.exponentialRampToValueAtTime(peak, t + 0.012); // gentle attack
       g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09); // soft tail
       lp.connect(g).connect(ctx.destination);
       // main triangle voice + a quiet detuned sine for a subtle cyborg shimmer

@@ -192,9 +192,10 @@ ipcMain.handle('setup-status', async () => {
   };
 });
 
-// Open a URL in the user's real browser (e.g. the Git-for-Windows download). http(s) only.
+// Open a URL externally: http(s) in the real browser (e.g. the Git-for-Windows download),
+// or the macOS System Settings deep-link (x-apple.systempreferences:) for Full Disk Access.
 ipcMain.on('open-external', (_e, url) => {
-  if (typeof url === 'string' && /^https?:\/\//i.test(url)) shell.openExternal(url);
+  if (typeof url === 'string' && /^(https?:|x-apple\.systempreferences:)/i.test(url)) shell.openExternal(url);
 });
 
 function parseRoll(text, fallback) {

@@ -93,7 +93,8 @@ body.darwin #app.sidebar-collapsed #tabbar { padding-left: 76px; }
 /* ---- terminal screen ---- */
 #terminals { flex: 1; position: relative; background: var(--screen);
   border: 2px solid; border-color: var(--dark) var(--light) var(--light) var(--dark); }
-.term-host { position: absolute; inset: 0; padding: 4px 6px; display: none; background: var(--screen); }
+/* Slim right padding so the reserved scrollbar gutter isn't covered by the screen margin. */
+.term-host { position: absolute; inset: 0; padding: 4px 1px 4px 6px; display: none; background: var(--screen); }
 .term-host.active { display: block; }
 .xterm { height: 100%; }
 
@@ -157,15 +158,17 @@ body.darwin #app.sidebar-collapsed #tabbar { padding-left: 76px; }
 .onboard h2 { margin: 0; font-size: 17px; letter-spacing: 3px; text-shadow: 0 0 9px rgba(139,224,192,.3); }
 .onboard .sub { font-size: 11px; opacity: .8; margin: -4px 0 2px; }
 .ob-step {
-  display: flex; align-items: center; gap: 9px; padding: 7px 9px; text-align: left;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 9px; padding: 7px 9px; text-align: left;
   background: #11141b; border: 2px solid; border-color: var(--dark) #2a2f3e #2a2f3e var(--dark);
 }
 .ob-mark { flex: 0 0 16px; text-align: center; font-size: 13px; }
 .ob-mark.ok { color: #9ece6a; } .ob-mark.no { color: #e0af68; }
-.ob-body { flex: 1; min-width: 0; }
+.ob-body { flex: 1 1 130px; min-width: 0; }
 .ob-title { font-size: 12px; font-weight: bold; color: var(--lcd); }
 .ob-note { font-size: 10px; opacity: .7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ob-actions { display: flex; gap: 4px; flex: 0 0 auto; }
+/* margin-left:auto right-aligns when inline; flex-wrap drops the whole group to its own
+   line when body+buttons can't fit, so wide actions (two buttons) never clip off-card. */
+.ob-actions { display: flex; gap: 4px; flex: 0 0 auto; margin-left: auto; }
 .onboard .btn { font: 11px var(--mono-font); padding: 2px 8px; }
 .ob-recheck { align-self: flex-start; opacity: .85; }
 /* auto-update banner */

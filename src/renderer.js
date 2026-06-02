@@ -24,6 +24,7 @@ const el = {
   rollBrain: document.getElementById('roll-brain'),
   voicePick: document.getElementById('voice-pick'),
   voiceVol: document.getElementById('voice-vol'),
+  blipVol: document.getElementById('blip-vol'),
   dirPick: document.getElementById('dir-pick'),
   memClear: document.getElementById('mem-clear'),
   chatForm: document.getElementById('chat-form'),
@@ -732,6 +733,18 @@ function initVoiceVol() {
     try { localStorage.setItem('rollClipVol', String(el.voiceVol.value / 100)); } catch (_) {}
   });
 }
+// Animalese-blip volume (her per-keystroke typing chirps). Stored as rollBlipVol 0..1; roll-face
+// reads it on every blip. Default 0.55 ≈ the original baked-in level.
+function initBlipVol() {
+  if (!el.blipVol) return;
+  let v = 0.55;
+  try { const s = localStorage.getItem('rollBlipVol'); if (s != null && s !== '') v = parseFloat(s); } catch (_) {}
+  if (isNaN(v)) v = 0.55;
+  el.blipVol.value = Math.round(Math.max(0, Math.min(1, v)) * 100);
+  el.blipVol.addEventListener('input', () => {
+    try { localStorage.setItem('rollBlipVol', String(el.blipVol.value / 100)); } catch (_) {}
+  });
+}
 window.souljaterm.onPopoutOpened(() => {
   poppedOut = true;
   el.app.classList.add('assistant-out');
@@ -762,6 +775,7 @@ document.body.classList.add(window.souljaterm.platform || 'darwin'); // lets CSS
   initBrainPicker();
   initVoicePick();
   initVoiceVol();
+  initBlipVol();
   rollFace.intro(lastRoll);   // absent for a beat → "appear" clip + CRT warp-in → greeting
   await loadSidebar();
   loadOnboarding();           // populate the empty-state setup checklist
