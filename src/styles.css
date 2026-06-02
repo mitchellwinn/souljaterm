@@ -181,16 +181,16 @@ body.darwin #app.sidebar-collapsed #tabbar { padding-left: 76px; }
 
 /* ---- assistant (Roll) ---- */
 #assistant { width: 168px; flex: 0 0 168px; display: flex; flex-direction: column; }
-#app.assistant-out #assistant { display: none; }       /* popped out */
 #app.assistant-min #assistant { display: none; }       /* minimized  */
 #assistant-body { flex: 1; display: flex; flex-direction: column; padding: 6px; gap: 6px; }
 
 .lcd { background: var(--screen); color: var(--lcd); margin: 0;
   border: 2px solid; border-color: var(--dark) var(--light) var(--light) var(--dark); }
 /* face box is square to match the 32x32 portrait; textbox takes the rest */
-#face, #pop-face { flex: 0 0 auto; aspect-ratio: 1 / 1; width: 100%; padding: 0;
+#face { flex: 0 0 auto; aspect-ratio: 1 / 1; width: 100%; padding: 0;
   display: flex; align-items: center; justify-content: center; overflow: hidden; }
-#face img, #pop-face img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+#face img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated;
+  -webkit-user-drag: none; user-select: none; pointer-events: none; }
 /* boot warp-in: she's hidden (.warp-pending), then powers on like a CRT/teleport (.warp-in).
    #face clips overflow, so the brief horizontal stretch doesn't spill out of her box. */
 #face.warp-pending img { opacity: 0; }
@@ -204,20 +204,20 @@ body.darwin #app.sidebar-collapsed #tabbar { padding-left: 76px; }
   82%  { filter: brightness(1.6); }
   100% { transform: none; filter: none; opacity: 1; }
 }
-#face .placeholder, #pop-face .placeholder {
+#face .placeholder {
   color: var(--lcd); font: 11px var(--mono-font); text-align: center; white-space: pre-line; opacity: .85; }
 /* min-height:0 lets the flex child shrink below its content height so its own
    overflow-y scroll engages, instead of growing the box and the window. */
-#msg, #pop-msg { flex: 1; min-height: 0; overflow-y: auto; padding: 9px; font: 12px var(--mono-font);
+#msg { flex: 1; min-height: 0; overflow-y: auto; padding: 9px; font: 12px var(--mono-font);
   line-height: 1.5; color: var(--lcd); white-space: pre-wrap; word-break: break-word; }
-#chat-form, #pop-chat-form { flex: 0 0 auto; display: flex; }
-#chat-input, #pop-chat-input {
+#chat-form { flex: 0 0 auto; display: flex; }
+#chat-input {
   flex: 1; min-width: 0; font: 12px var(--mono-font); color: var(--lcd);
   background: var(--screen); padding: 6px 8px;
   border: 2px solid; border-color: var(--dark) var(--light) var(--light) var(--dark); }
-#chat-input::placeholder, #pop-chat-input::placeholder { color: var(--fg-dim); }
-#chat-input:focus, #pop-chat-input:focus { outline: none; }
-#msg.typing::after, #pop-msg.typing::after { content: "▋"; animation: caret .6s steps(1) infinite; }
+#chat-input::placeholder { color: var(--fg-dim); }
+#chat-input:focus { outline: none; }
+#msg.typing::after { content: "▋"; animation: caret .6s steps(1) infinite; }
 @keyframes caret { 50% { opacity: 0; } }
 
 /* the tab Roll is currently talking about: a little colored, clickable header above her
@@ -338,7 +338,9 @@ body.darwin #app.sidebar-collapsed #tabbar { padding-left: 76px; }
 .task-followup input::placeholder { color: var(--fg-dim, #6b7089); }
 
 /* ---- CRT shader overlay + editor ---- */
-/* Full-window overlay: rides above everything, never eats clicks (mirrors the live DOM). */
+/* Full-window overlay canvas: rides above everything, never eats clicks. fx.js paints each
+   shaded surface's rect onto it and leaves the rest transparent, so un-shaded chrome shows
+   through crisp and clicks pass to the live DOM. Created/toggled by fx.js. */
 #fx-overlay { position: fixed; inset: 0; z-index: 40; pointer-events: none; display: none; }
 #fx-edit { padding: 0 5px; }
 
@@ -355,8 +357,6 @@ body.darwin #app.sidebar-collapsed #tabbar { padding-left: 76px; }
 .fx-row { display: flex; align-items: center; gap: 8px; font: 11px var(--mono-font); }
 .fx-row > span:first-child { flex: 0 0 64px; font-weight: bold; letter-spacing: .5px; }
 .fx-row select, .fx-row input[type=text] { flex: 1; min-width: 0; font: 11px var(--mono-font); }
-.fx-checks { display: flex; gap: 10px; flex-wrap: wrap; }
-.fx-checks label { display: flex; align-items: center; gap: 4px; }
 .fx-foot-btns { gap: 6px; }
 .fx-foot-btns .btn { flex: 1; font: 10px var(--mono-font); padding: 3px 4px; }
 

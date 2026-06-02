@@ -1,32 +1,15 @@
-/* souljaterm — CRT shader overlay manager.
+/* souljaterm — CRT shader for Roll's face.
  *
- * One full-window WebGL2 canvas at pointer-events:none. Each registered "surface" (the active
- * terminal, Roll's face) hands us a source canvas/image each frame; we run the selected libretro
- * .glslp chain (see glslp.js) and paint the result over that surface's screen rect. Everywhere
- * else stays transparent, so un-shaded chrome shows through crisp and clicks pass to the live DOM.
+ * One full-window WebGL2 canvas at pointer-events:none. Roll's 32x32 pixel-art face hands us its
+ * <img> each frame; we run the selected libretro .glslp chain (see glslp.js) and paint the result
+ * over her face's rect. Everywhere else stays transparent, so the rest of the app shows through
+ * crisp and clicks pass to the live DOM. Her low-res portrait is what makes scanlines read like a
+ * real CRT tube — the effect is pointless on hi-res surfaces, so it's scoped to her box alone.
  *
- * Config persists in localStorage. The shader-editing menu in renderer.js drives this via the
- * public API on window.Fx.
+ * Config persists in localStorage. The shader menu in renderer.js drives this via window.Fx.
  */
 (function () {
   'use strict';
-
-  // xterm's WebGL renderer creates its canvas with preserveDrawingBuffer:false, so drawImage()
-  // of it returns a blank buffer — we'd capture nothing to shade. Force the flag on every WebGL
-  // context (installed before any terminal is created) so the terminal canvas stays snapshot-able.
-  // Cost is a small amount of GPU bandwidth; fine for a terminal.
-  (function patchGetContext() {
-    const proto = HTMLCanvasElement.prototype;
-    if (proto.__fxPatched) return;
-    const orig = proto.getContext;
-    proto.getContext = function (type, attrs) {
-      if (type === 'webgl' || type === 'webgl2') {
-        attrs = Object.assign({}, attrs, { preserveDrawingBuffer: true });
-      }
-      return orig.call(this, type, attrs);
-    };
-    proto.__fxPatched = true;
-  })();
 
   const LS_KEY = 'fxConfig';
   const listeners = [];
@@ -43,7 +26,6 @@
     return {
       enabled: !!c.enabled,
       preset: c.preset || null,                       // { where, file }
-      surfaces: Object.assign({ terminal: true, rollface: true }, c.surfaces || {}),
       params: c.params || {},                         // { "where/file": { NAME: val } }
     };
   }
@@ -58,7 +40,7 @@
     canvas.id = 'fx-overlay';
     document.body.appendChild(canvas);
     gl = canvas.getContext('webgl2', { alpha: true, premultipliedAlpha: false, antialias: false });
-    if (!gl) { console.warn('[fx] WebGL2 unavailable — CRT shaders disabled'); return; }
+    if (!gl) { console.warn('[fx] WebGL2 unavailable — CRT shader disabled'); return; }
     chain = new window.Glslp.Chain(gl);
   }
 
@@ -83,10 +65,9 @@
     const cssH = window.innerHeight;
     const scale = dpr();
     for (const id in surfaces) {
-      if (!cfg.surfaces[id]) continue;
       const surf = surfaces[id];
-      // el may be an element or a function resolving the current element (the active terminal's
-      // grid moves between tabs), so the shaded rect tracks the real content, not a fixed box.
+      // el may be an element or a function resolving the current element, so the shaded rect
+      // tracks the real content rather than a fixed box.
       const node = typeof surf.el === 'function' ? safe(surf.el) : surf.el;
       if (!node) continue;
       const src = safe(surf.getSource);
@@ -170,7 +151,6 @@
       emit();
     },
     toggle() { Fx.setEnabled(!cfg.enabled); },
-    setSurface(id, on) { cfg.surfaces[id] = !!on; saveConfig(); emit(); },
     async selectPreset(where, file) {
       const ok = await applyPreset({ where, file });
       if (ok && cfg.enabled) start();
@@ -183,6 +163,9 @@
       (cfg.params[k] = cfg.params[k] || {})[name] = val;
       saveConfig();
     },
+    // Like setParam but transient — drives a uniform live (e.g. WiFi-reactive wobble) without
+    // persisting it or overwriting the user's saved value.
+    setLiveParam(name, val) { if (chain) chain.setParam(name, val); },
     // Live-edit: recompile the single-pass current preset from edited source text.
     applySource(text) {
       if (!chain) return { ok: false, error: 'no chain' };
@@ -204,7 +187,6 @@
       ready: !!gl,
       enabled: cfg.enabled,
       preset: cfg.preset,
-      surfaces: Object.assign({}, cfg.surfaces),
       list: shaderList.map((s) => ({ where: s.where, file: s.file, name: s.name })),
       params: chain ? chain.paramList().map((p) => Object.assign({}, p, { value: chain.values[p.name] != null ? chain.values[p.name] : p.def })) : [],
       error: chain ? chain.error : null,

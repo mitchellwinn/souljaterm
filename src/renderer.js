@@ -30,16 +30,13 @@ const el = {
   chatForm: document.getElementById('chat-form'),
   chatInput: document.getElementById('chat-input'),
   assistantMin: document.getElementById('assistant-min'),
-  assistantPopout: document.getElementById('assistant-popout'),
   assistantRestore: document.getElementById('assistant-restore'),
-  fxPick: document.getElementById('fx-pick'),
+  fxScope: document.getElementById('fx-scope'),
+  fxScopeModal: document.getElementById('fx-scope-modal'),
   fxEdit: document.getElementById('fx-edit'),
   fxModal: document.getElementById('fx-modal'),
   fxClose: document.getElementById('fx-close'),
-  fxEnabled: document.getElementById('fx-enabled'),
   fxPreset: document.getElementById('fx-preset'),
-  fxSurfTerminal: document.getElementById('fx-surf-terminal'),
-  fxSurfRollface: document.getElementById('fx-surf-rollface'),
   fxParams: document.getElementById('fx-params'),
   fxFolder: document.getElementById('fx-folder'),
   fxReload: document.getElementById('fx-reload'),
@@ -391,14 +388,12 @@ function pickClip(s) {
   return null;
 }
 
-let poppedOut = false;
 function renderRoll(state) {
   lastRoll = state;
   // If Roll named the task, retitle its tab as "dir: topic" (rides the brain calls she already makes).
   if (state.title && state.tab) setTabActivity(tabs.find((t) => t.id === state.tab), state.title);
   if (state.clip === undefined) state.clip = pickClip(state); // choose her exclamation (or none)
-  if (!poppedOut) rollFace.speak(state);    // popped out → the pop-out window does the talking, not the hidden dock
-  window.souljaterm.assistantRender(state); // mirror to pop-out window if open
+  rollFace.speak(state);
 }
 
 // brain mode: off (scripted) | cli (subscription) | api (Haiku key)
@@ -582,7 +577,6 @@ async function chatToRoll(message) {
 }
 // Roll's own housekeeping notices (e.g. memory compaction) — pushed from main, rendered in character.
 if (window.souljaterm.onRollNote) window.souljaterm.onRollNote((s) => { if (s && s.line && rollActive()) renderRoll(s); });
-window.souljaterm.onPopoutChat((msg) => chatToRoll(msg));
 
 // When the user fires off a prompt to Claude, Roll reacts to it with personality (brain reads the
 // task and riffs; brain-off falls back to a spirited canned line). Bypasses the LLM cooldown — a
@@ -746,12 +740,11 @@ async function loadOnboarding() {
   }
 }
 
-/* ---- assistant dock / popout ---- */
+/* ---- assistant dock ---- */
 // Minimizing reclaims her strip: refit so the terminal grows into it instead of leaving a black gap.
 function refitActive() { requestAnimationFrame(() => active && active.fit.fit()); }
 el.assistantMin.addEventListener('click', () => { el.app.classList.add('assistant-min'); refitActive(); });
 el.assistantRestore.addEventListener('click', () => { el.app.classList.remove('assistant-min'); refitActive(); });
-el.assistantPopout.addEventListener('click', () => window.souljaterm.popout());
 el.chatForm.addEventListener('submit', (e) => {
   e.preventDefault();
   const v = el.chatInput.value;
@@ -794,17 +787,6 @@ function initBlipVol() {
     try { localStorage.setItem('rollBlipVol', String(el.blipVol.value / 100)); } catch (_) {}
   });
 }
-window.souljaterm.onPopoutOpened(() => {
-  poppedOut = true;
-  el.app.classList.add('assistant-out');
-  window.souljaterm.assistantRender({ ...lastRoll, instant: true }); // hand the current line over as-is, no re-typing
-});
-window.souljaterm.onPopoutClosed(() => {
-  poppedOut = false;
-  el.app.classList.remove('assistant-out');
-  rollFace.show(lastRoll);                                            // restore the docked face instantly
-});
-
 /* ---- Roll's task manager: free-form "!do this" agents she runs for you ---- */
 // No input box here on purpose — the one way to start a task is to "!type" it to Roll in her
 // chat. The panel is just the live view of what she's doing.
@@ -1034,51 +1016,29 @@ window.addEventListener('resize', () => active && active.fit.fit());
 
 document.body.classList.add(window.souljaterm.platform || 'darwin'); // lets CSS tune chrome per-OS
 
-/* ---- CRT shaders (RetroArch .glslp over terminal + Roll's face) ---- */
-// Source providers: each shaded surface hands the engine a canvas/image of its current pixels.
-const termScratch = document.createElement('canvas');
-function getTerminalSource() {
-  if (!active) return null;
-  const cs = active.host.querySelectorAll('canvas');
-  if (!cs.length) return null;
-  let w = 0, h = 0;
-  cs.forEach((c) => { w = Math.max(w, c.width); h = Math.max(h, c.height); });
-  if (!w || !h) return null;
-  if (termScratch.width !== w || termScratch.height !== h) { termScratch.width = w; termScratch.height = h; }
-  const ctx = termScratch.getContext('2d');
-  ctx.fillStyle = THEME.background; ctx.fillRect(0, 0, w, h);
-  // composite xterm's canvas layers (webgl: one; canvas renderer: text/selection/cursor) in DOM order
-  cs.forEach((c) => { try { ctx.drawImage(c, 0, 0, w, h); } catch (_) {} });
-  return termScratch;
-}
+/* ---- CRT shader for Roll's face (RetroArch .glslp; engine in fx.js) ---- */
+// Roll's pixel-art portrait is the only shaded surface — her low res is what makes scanlines read
+// like a real CRT. Hand the engine her <img> each frame.
 function getRollFaceSource() {
   const img = el.face.querySelector('img');
   if (!img || !img.complete || !img.naturalWidth) return null;
   return img;
 }
-// The shaded rect must be the xterm GRID, not the whole #terminals box — otherwise the warp
-// stretches across the padding + scrollbar gutter and paints over the real (DOM) scrollbar.
-function terminalSurfaceEl() {
-  if (!active) return null;
-  return active.host.querySelector('.xterm-screen') || active.host.querySelector('canvas') || active.host;
-}
+
+function fmt(v) { return (Math.round(v * 100) / 100).toString(); }
 
 function renderFxUI(s) {
-  // foot picker: "off" + one entry per preset
-  const cur = s.enabled && s.preset ? s.preset.where + '/' + s.preset.file : 'off';
-  const opts = ['<option value="off">off</option>']
-    .concat(s.list.map((p) => `<option value="${p.where}/${p.file}">${p.name}</option>`)).join('');
-  if (el.fxPick.dataset.sig !== opts) { el.fxPick.innerHTML = opts; el.fxPick.dataset.sig = opts; }
-  el.fxPick.value = cur;
+  // on/off (sidebar foot + modal mirror each other)
+  el.fxScope.value = s.enabled ? 'on' : 'off';
+  el.fxScopeModal.value = s.enabled ? 'on' : 'off';
+
+  // preset picker (rebuild only when the list changes)
+  const opts = s.list.map((p) => `<option value="${p.where}/${p.file}">${p.name}</option>`).join('');
   if (el.fxPreset.dataset.sig !== opts) { el.fxPreset.innerHTML = opts; el.fxPreset.dataset.sig = opts; }
   el.fxPreset.value = s.preset ? s.preset.where + '/' + s.preset.file : '';
-
-  el.fxEnabled.checked = s.enabled;
-  el.fxSurfTerminal.checked = !!s.surfaces.terminal;
-  el.fxSurfRollface.checked = !!s.surfaces.rollface;
   el.fxError.textContent = s.error || '';
 
-  // parameter sliders (only rebuild when the parameter set changes, to not fight live dragging)
+  // parameter sliders (rebuild only when the param set changes, so live dragging isn't interrupted)
   const sig = s.params.map((p) => p.name).join(',');
   if (el.fxParams.dataset.sig !== sig) {
     el.fxParams.dataset.sig = sig;
@@ -1099,7 +1059,6 @@ function renderFxUI(s) {
     s.params.forEach((p, i) => { if (ranges[i] && document.activeElement !== ranges[i]) ranges[i].value = p.value; });
   }
 }
-function fmt(v) { return (Math.round(v * 100) / 100).toString(); }
 
 function openFxModal() {
   el.fxSource.value = Fx.currentSource();
@@ -1108,28 +1067,21 @@ function openFxModal() {
 }
 
 function initFx() {
-  Fx.registerSurface('terminal', terminalSurfaceEl, getTerminalSource);
   Fx.registerSurface('rollface', el.face, getRollFaceSource);
   Fx.onChange(renderFxUI);
 
-  const pickHandler = async (sel) => {
-    if (sel.value === 'off') { Fx.setEnabled(false); return; }
-    const [where, file] = sel.value.split('/');
-    await Fx.selectPreset(where, file);
-    Fx.setEnabled(true);
-  };
-  el.fxPick.addEventListener('change', () => pickHandler(el.fxPick));
-  el.fxPreset.addEventListener('change', () => pickHandler(el.fxPreset));
+  el.fxScope.addEventListener('change', () => Fx.setEnabled(el.fxScope.value === 'on'));
+  el.fxScopeModal.addEventListener('change', () => Fx.setEnabled(el.fxScopeModal.value === 'on'));
+  el.fxPreset.addEventListener('change', async () => {
+    const [where, file] = el.fxPreset.value.split('/');
+    if (where && file) await Fx.selectPreset(where, file);
+  });
   el.fxEdit.addEventListener('click', openFxModal);
   el.fxClose.addEventListener('click', () => { el.fxModal.hidden = true; });
   el.fxModal.addEventListener('click', (e) => { if (e.target === el.fxModal) el.fxModal.hidden = true; });
-  el.fxEnabled.addEventListener('change', () => Fx.setEnabled(el.fxEnabled.checked));
-  el.fxSurfTerminal.addEventListener('change', () => Fx.setSurface('terminal', el.fxSurfTerminal.checked));
-  el.fxSurfRollface.addEventListener('change', () => Fx.setSurface('rollface', el.fxSurfRollface.checked));
   el.fxApply.addEventListener('click', () => {
     const r = Fx.applySource(el.fxSource.value);
     el.fxError.textContent = r.ok ? '' : (r.error || 'compile failed');
-    if (r.ok && !Fx.getState().enabled) Fx.setEnabled(true);
   });
   el.fxFolder.addEventListener('click', async () => { await window.souljaterm.openShaderDir(); });
   el.fxReload.addEventListener('click', async () => { await Fx.refreshList(); });
@@ -1146,7 +1098,7 @@ function initFx() {
   initVoiceVol();
   initBlipVol();
   initTaskUI();               // Roll's task manager panel (☰ in her header, or "!" in chat)
-  initFx();                   // RetroArch CRT shader overlay (CRT picker in sidebar foot)
+  initFx();                   // RetroArch CRT shaders over screen surfaces (CRT picker in sidebar foot)
   rollFace.intro(lastRoll);   // absent for a beat → "appear" clip + CRT warp-in → greeting
   await loadSidebar();
   loadOnboarding();           // populate the empty-state setup checklist

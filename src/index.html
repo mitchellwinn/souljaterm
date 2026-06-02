@@ -24,7 +24,7 @@
         <div class="foot-row"><span class="foot-label">CLIPS</span><input id="voice-vol" type="range" min="0" max="100" title="Volume of Roll's recorded voice clips" /></div>
         <div class="foot-row"><span class="foot-label">BLIPS</span><input id="blip-vol" type="range" min="0" max="100" title="Volume of Roll's animalese typing blips" /></div>
         <div class="foot-row"><span class="foot-label">MEM</span><button id="mem-clear" class="btn">clear memory</button></div>
-        <div class="foot-row"><span class="foot-label">CRT</span><select id="fx-pick" class="btn" title="RetroArch shader over the screen"></select><button id="fx-edit" class="btn" title="Edit shader">⚙</button></div>
+        <div class="foot-row"><span class="foot-label">CRT</span><select id="fx-scope" class="btn" title="CRT shader on Roll's face"><option value="off">off</option><option value="on">on</option></select><button id="fx-edit" class="btn" title="Shader settings">⚙</button></div>
       </div>
     </aside>
 
@@ -71,7 +71,6 @@
         <span id="assistant-name">ROLL</span>
         <span style="-webkit-app-region: no-drag; display:flex; gap:3px;">
           <button id="assistant-tasks" class="btn" title="Task manager">☰</button>
-          <button id="assistant-popout" class="btn" title="Pop out">⇱</button>
           <button id="assistant-min" class="btn" title="Minimize">▁</button>
         </span>
       </div>
@@ -87,7 +86,7 @@
     <button id="assistant-restore" class="btn" title="Show Term-tan">☻</button>
   </div>
 
-  <!-- RetroArch shader editor -->
+  <!-- RetroArch shader settings -->
   <div id="fx-modal" hidden>
     <div id="fx-dialog" class="panel-raised">
       <div class="fx-head bevel-title">
@@ -96,14 +95,13 @@
       </div>
       <div class="fx-body">
         <div class="fx-controls">
-          <label class="fx-row"><span>Enabled</span><input type="checkbox" id="fx-enabled" /></label>
+          <label class="fx-row"><span>CRT</span>
+            <select id="fx-scope-modal" class="btn">
+              <option value="off">off</option>
+              <option value="on">on</option>
+            </select>
+          </label>
           <label class="fx-row"><span>Preset</span><select id="fx-preset" class="btn"></select></label>
-          <div class="fx-row"><span>Surfaces</span>
-            <span class="fx-checks">
-              <label><input type="checkbox" id="fx-surf-terminal" /> terminal</label>
-              <label><input type="checkbox" id="fx-surf-rollface" /> roll</label>
-            </span>
-          </div>
           <div class="fx-params" id="fx-params"></div>
           <div class="fx-row fx-foot-btns">
             <button id="fx-folder" class="btn" title="Drop your own .glslp presets here">open shader folder…</button>

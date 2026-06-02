@@ -15,12 +15,6 @@ contextBridge.exposeInMainWorld('souljaterm', {
   listDir: (dir) => ipcRenderer.invoke('list-dir', dir),
   // Roll the assistant
   rollSpeak: (event) => ipcRenderer.invoke('roll-speak', event),
-  assistantRender: (state) => ipcRenderer.send('assistant-render', state),
-  popout: () => ipcRenderer.send('assistant-popout'),
-  popin: () => ipcRenderer.send('assistant-popin'),
-  onPopoutOpened: (cb) => ipcRenderer.on('popout-opened', () => cb()),
-  onPopoutClosed: (cb) => ipcRenderer.on('popout-closed', () => cb()),
-  onAssistantState: (cb) => ipcRenderer.on('assistant-state', (_e, s) => cb(s)),
   onClaudeEvent: (cb) => ipcRenderer.on('claude-event', (_e, evt) => cb(evt)),
   readTranscript: (p) => ipcRenderer.invoke('read-transcript', p),
   watchTranscript: (p, tab) => ipcRenderer.send('watch-transcript', { path: p, tab }),
@@ -35,8 +29,6 @@ contextBridge.exposeInMainWorld('souljaterm', {
   memory: () => ipcRenderer.invoke('roll-memory'),
   clearMemory: () => ipcRenderer.send('roll-memory-clear'),
   onRollNote: (cb) => ipcRenderer.on('roll-note', (_e, s) => cb(s)),
-  popoutChat: (msg) => ipcRenderer.send('popout-chat-send', msg),
-  onPopoutChat: (cb) => ipcRenderer.on('popout-chat', (_e, msg) => cb(msg)),
   // RetroArch shaders
   listShaders: () => ipcRenderer.invoke('list-shaders'),
   readShader: (where, file) => ipcRenderer.invoke('read-shader', { where, file }),

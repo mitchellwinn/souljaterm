@@ -26,7 +26,6 @@ function ptyCommand(dir) {
 }
 const ptys = new Map();
 let mainWin = null;
-let popout = null;
 let sockPath = null;
 let sockServer = null;
 
@@ -863,45 +862,6 @@ function createWindow() {
 
   // Roll: generate an in-character line for an event.
   ipcMain.handle('roll-speak', (_e, event) => callRoll(event));
-
-  // Mirror Roll's current state into the popout window, if it's open.
-  ipcMain.on('assistant-render', (_e, state) => {
-    if (popout && !popout.isDestroyed()) popout.webContents.send('assistant-state', state);
-  });
-
-  // Pop Roll out into her own little always-on-top window.
-  ipcMain.on('assistant-popout', () => {
-    if (popout && !popout.isDestroyed()) { popout.focus(); return; }
-    popout = new BrowserWindow({
-      width: 230, height: 392, resizable: false, alwaysOnTop: true,
-      ...(isMac ? { titleBarStyle: 'hiddenInset' } : { frame: false }), // off mac: frameless, its own head drags
-      backgroundColor: '#0e1015',
-      webPreferences: {
-        preload: path.join(__dirname, 'preload.js'),
-        contextIsolation: true,
-        autoplayPolicy: 'no-user-gesture-required',
-      },
-    });
-    // Float above everything, including other apps' macOS full-screen spaces.
-    popout.setAlwaysOnTop(true, 'screen-saver');
-    popout.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    popout.loadFile(path.join(__dirname, 'src', 'assistant.html'));
-    // Only hand off once the pop-out has loaded its listeners, so the first (instant)
-    // state sync doesn't fire into a page that isn't ready to receive it.
-    popout.webContents.once('did-finish-load', () => {
-      if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('popout-opened');
-    });
-    popout.on('closed', () => {
-      popout = null;
-      if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('popout-closed');
-    });
-  });
-  ipcMain.on('assistant-popin', () => { if (popout && !popout.isDestroyed()) popout.close(); });
-
-  // Pop-out chat input is routed through the main window (single Roll brain driver).
-  ipcMain.on('popout-chat-send', (_e, msg) => {
-    if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('popout-chat', msg);
-  });
 }
 
 app.whenReady().then(async () => {
