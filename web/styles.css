@@ -114,8 +114,18 @@ body.on .power { display: none; }
 .foot a { color: #0a5c4a; }
 
 @media (max-width: 620px) {
-  .body { flex-direction: column; }
-  .roll { width: 100%; flex: 0 0 auto; flex-direction: row; gap: 8px; }
-  #face { width: 84px; flex: 0 0 84px; margin: 0; }
-  .screen h1 { font-size: 21px; }
+  body { padding: 14px 8px; }
+  #frame { width: 100%; }
+  .body { flex-direction: column; padding: 6px; gap: 6px; }
+
+  .screen { padding: 14px 14px 16px; }
+  .screen h1 { font-size: 20px; }
+  .feats { font-size: 12px; }
+  .btn.big { font-size: 14px; }
+
+  /* Roll panel stays a column: ROLL header on top, a centered SQUARE face,
+     then the message box expanded full-width below (even before she speaks). */
+  .roll { width: 100%; flex: 0 0 auto; }
+  #face { width: 100%; max-width: 200px; margin: 8px auto; }
+  #msg { height: 120px; }
 }
