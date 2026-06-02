@@ -24,6 +24,7 @@
         <div class="foot-row"><span class="foot-label">CLIPS</span><input id="voice-vol" type="range" min="0" max="100" title="Volume of Roll's recorded voice clips" /></div>
         <div class="foot-row"><span class="foot-label">BLIPS</span><input id="blip-vol" type="range" min="0" max="100" title="Volume of Roll's animalese typing blips" /></div>
         <div class="foot-row"><span class="foot-label">MEM</span><button id="mem-clear" class="btn">clear memory</button></div>
+        <div class="foot-row"><span class="foot-label">CRT</span><select id="fx-pick" class="btn" title="RetroArch shader over the screen"></select><button id="fx-edit" class="btn" title="Edit shader">⚙</button></div>
       </div>
     </aside>
 
@@ -40,10 +41,36 @@
       </div>
     </main>
 
+    <section id="tasks-panel" class="panel-raised" hidden>
+      <div class="tasks-head bevel-title">
+        <span class="tasks-title">ROLL · TASKS</span>
+        <button id="tasks-close" class="btn" title="Close">×</button>
+      </div>
+      <div class="tasks-scroll">
+        <div class="tasks-hud-wrap">
+          <div class="tasks-section-label">SESSIONS</div>
+          <div id="tasks-hud" class="tasks-hud"></div>
+        </div>
+        <div class="tasks-section-label">TASKS</div>
+        <div id="task-list" class="task-list"></div>
+        <div id="task-empty" class="task-empty">
+          <div class="te-title">No tasks running.</div>
+          <div class="te-body">Put Roll to work right from her chat: type <span class="te-kbd">!</span> then what you want done.</div>
+          <div class="te-egs">
+            <div class="te-eg">!organize my downloads by type</div>
+            <div class="te-eg">!summarize what changed in this repo today</div>
+            <div class="te-eg">!clean the .DS_Store files out of here</div>
+          </div>
+          <div class="te-foot">She picks a model, plans first when it's risky, then shows the work right here.</div>
+        </div>
+      </div>
+    </section>
+
     <aside id="assistant" class="panel-raised">
       <div class="assistant-head bevel-title">
         <span id="assistant-name">ROLL</span>
         <span style="-webkit-app-region: no-drag; display:flex; gap:3px;">
+          <button id="assistant-tasks" class="btn" title="Task manager">☰</button>
           <button id="assistant-popout" class="btn" title="Pop out">⇱</button>
           <button id="assistant-min" class="btn" title="Minimize">▁</button>
         </span>
@@ -60,11 +87,48 @@
     <button id="assistant-restore" class="btn" title="Show Term-tan">☻</button>
   </div>
 
+  <!-- RetroArch shader editor -->
+  <div id="fx-modal" hidden>
+    <div id="fx-dialog" class="panel-raised">
+      <div class="fx-head bevel-title">
+        <span class="fx-title">CRT SHADER</span>
+        <button id="fx-close" class="btn" title="Close">×</button>
+      </div>
+      <div class="fx-body">
+        <div class="fx-controls">
+          <label class="fx-row"><span>Enabled</span><input type="checkbox" id="fx-enabled" /></label>
+          <label class="fx-row"><span>Preset</span><select id="fx-preset" class="btn"></select></label>
+          <div class="fx-row"><span>Surfaces</span>
+            <span class="fx-checks">
+              <label><input type="checkbox" id="fx-surf-terminal" /> terminal</label>
+              <label><input type="checkbox" id="fx-surf-rollface" /> roll</label>
+            </span>
+          </div>
+          <div class="fx-params" id="fx-params"></div>
+          <div class="fx-row fx-foot-btns">
+            <button id="fx-folder" class="btn" title="Drop your own .glslp presets here">open shader folder…</button>
+            <button id="fx-reload" class="btn">reload presets</button>
+          </div>
+        </div>
+        <div class="fx-editor">
+          <div class="fx-editor-label">pass source (live)</div>
+          <textarea id="fx-source" spellcheck="false"></textarea>
+          <div class="fx-editor-foot">
+            <button id="fx-apply" class="btn">apply ▸</button>
+            <span id="fx-error" class="fx-error"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
   <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
   <script src="../node_modules/@xterm/addon-webgl/lib/addon-webgl.js"></script>
   <script src="roll-anim.js"></script>
   <script src="roll-face.js"></script>
+  <script src="glslp.js"></script>
+  <script src="fx.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

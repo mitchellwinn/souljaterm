@@ -37,7 +37,7 @@ if (isMobile) {
   document.body.classList.add('mobile');
   primary.textContent = '⤓ Get it on a computer';          // nothing to install on a phone
   const hint = document.querySelector('.boot-hint');
-  if (hint) hint.textContent = "▸ tap Roll's screen to power on ↓";
+  if (hint) hint.textContent = "▸ Tap Roll's screen to power on ↓";
 }
 
 // Her scripted welcome pitch (the queue paces these; clips throttle themselves).
@@ -46,7 +46,8 @@ if (isMobile) {
 const desktopLines = [
   { expression: 'happy',       line: "Hi, I'm Roll! Dr. Light built me to keep house. These days I keep your terminal company instead." },
   { expression: 'talk',        line: "Down there is a real shell running Claude Code, and I live in the corner of it, rooting for you." },
-  { expression: 'mischievous', line: "I ping you the instant Claude needs a human. Basically the supportive little sister your shell never had.", clip: 'mitete' },
+  { expression: 'talk',        line: "Need a hand? Just type \"!do this\" and I'll take the job myself — I route it, run it, and show you every step in a live panel." },
+  { expression: 'wink',        line: "I also ping you the instant Claude needs a human. Basically the supportive little sister your shell never had.", clip: 'mitete' },
   { expression: 'happy',       line: `Grab it below${os ? ' for ' + os : ''}. It's free and runs on your own Claude login, no key required.`, clip: 'ikuyo' },
 ];
 
@@ -55,8 +56,9 @@ const desktopLines = [
 const mobileLines = [
   { expression: 'surprised',   line: "Hold on, let me scan your hardware… you're running me on a phone?!", clip: 'kya' },
   { expression: 'talk',        line: "Astonishing. A whole computer in one hand. I'm from 20XX and even WE thought this was sci-fi." },
-  { expression: 'mischievous', line: "Pocket supercomputer, opening a terminal site on the go. Very cute. Very advanced. Dr. Light would faint.", clip: 'mitete' },
+  { expression: 'wink',        line: "Pocket supercomputer, opening a terminal site on the go. Very cute. Very advanced. Dr. Light would faint.", clip: 'mitete' },
   { expression: 'happy',       line: "But robot to human: souljaterm runs real shells and Claude Code. For actual work, you want a proper computer." },
+  { expression: 'talk',        line: "That's where I really shine — type \"!do this\" and I'll take the job myself, running it as an agent and showing you every step." },
   { expression: 'wink',        line: "Bookmark me, come back on a desktop. macOS, Windows or Linux. I'll keep your seat warm!", clip: 'makasete' },
 ];
 
@@ -83,7 +85,7 @@ powerBtn.addEventListener('click', powerOn); // only Roll's screen powers on
 // If they linger, she keeps the energy up.
 const nudges = isMobile ? [
   { expression: 'wink',        line: "Still thumbing away on the pocket marvel? Adorable. A desktop's ready whenever you're serious.", clip: 'sore' },
-  { expression: 'mischievous', line: "Tiny screen, big dreams. Come find me on a real machine and let's actually build something.", clip: 'makasete' },
+  { expression: 'wink',        line: "Tiny screen, big dreams. Come find me on a real machine and let's actually build something.", clip: 'makasete' },
 ] : [
   { expression: 'wink',        line: "Still here? Go on, I'll keep your sessions tidy while you work.", clip: 'sore' },
   { expression: 'happy',       line: "I run native on macOS, Windows and Linux. Dr. Light made me very portable.", clip: 'makasete' },

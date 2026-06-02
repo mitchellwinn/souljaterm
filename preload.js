@@ -26,10 +26,21 @@ contextBridge.exposeInMainWorld('souljaterm', {
   watchTranscript: (p, tab) => ipcRenderer.send('watch-transcript', { path: p, tab }),
   onTranscriptLive: (cb) => ipcRenderer.on('transcript-live', (_e, d) => cb(d)),
   rollLog: (kind, project, text) => ipcRenderer.send('roll-log', { kind, project, text }),
+  // Roll's task manager
+  taskRoute: (prompt) => ipcRenderer.invoke('task-route', prompt),
+  taskStart: (opts) => ipcRenderer.send('task-start', opts),
+  taskCancel: (id) => ipcRenderer.send('task-cancel', id),
+  taskHistory: () => ipcRenderer.invoke('task-history'),
+  onTaskEvent: (cb) => ipcRenderer.on('task-event', (_e, p) => cb(p)),
   memory: () => ipcRenderer.invoke('roll-memory'),
   clearMemory: () => ipcRenderer.send('roll-memory-clear'),
+  onRollNote: (cb) => ipcRenderer.on('roll-note', (_e, s) => cb(s)),
   popoutChat: (msg) => ipcRenderer.send('popout-chat-send', msg),
   onPopoutChat: (cb) => ipcRenderer.on('popout-chat', (_e, msg) => cb(msg)),
+  // RetroArch shaders
+  listShaders: () => ipcRenderer.invoke('list-shaders'),
+  readShader: (where, file) => ipcRenderer.invoke('read-shader', { where, file }),
+  openShaderDir: () => ipcRenderer.invoke('open-shader-dir'),
   // auto-update
   onUpdateStatus: (cb) => ipcRenderer.on('update-status', (_e, s) => cb(s)),
   updateStatusGet: () => ipcRenderer.invoke('update-status-get'),

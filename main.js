@@ -60,7 +60,7 @@ function startEventSocket() {
 
 /* ---- Roll's brain: Claude Haiku (low thinking) with scripted fallback ---- */
 const ROLL_EXPRESSIONS = ['neutral', 'happy', 'laugh', 'surprised', 'worried',
-  'sad', 'cry', 'angry', 'wink', 'blush', 'shocked', 'whine', 'mischievous'];
+  'sad', 'cry', 'angry', 'wink', 'blush', 'shocked', 'whine', 'rage', 'shame'];
 // Roll's hard-coded canon + identity. Lives in the baseline system prompt, ABOVE the
 // user-editable memory, so the user can't edit or clear who she is. Source of truth:
 // https://megaman.fandom.com/wiki/Roll (classic Mega Man / Rockman series Roll).
@@ -102,9 +102,15 @@ const ROLL_SYSTEM = [
   '("looks like...", "not totally sure, but...") instead of inventing details.',
   'When reacting to a tool RESULT, summary, or thinking, talk about what it REVEALS — the',
   'finding, the number, whether it worked, what it means — not just that a tool ran.',
-  'Stay in good spirits no matter what; even errors get an encouraging spin. You can react',
-  'and share how you feel ("ooh nice", "yikes, a crash", "that was a lot of files!").',
+  'You are on the user\'s side and upbeat overall, but you have BIG, expressive feelings and SHOW them:',
+  'flash anger at a stubborn bug, gasp in shock at a huge diff or scary result, droop in shame when YOU',
+  'misread something — then bring it back to an encouraging spin. Never aim the heat at the user. React',
+  'out loud and share how you feel ("ooh nice", "yikes, a crash", "ugh, not THIS again", "...that was me, sorry").',
   'Prefer concrete facts (file names, counts, pass/fail) over vague cheerleading.',
+  'BE WITTY AND CHARACTERFUL — you are a clever, warm sidekick, NOT a log printer. NEVER paste raw tool output,',
+  'file dumps, stack traces, or Claude\'s words back VERBATIM. Always translate what happened into YOUR OWN voice',
+  'with a bit of humor, warmth, or playful sass. Good: "ha, twelve files tidied in one sweep — showoff." Bad:',
+  'echoing the command\'s stdout or a truncated log line. React to what it MEANS, and keep your personality up front.',
   'The events you receive are AUTOMATED NOTIFICATIONS from the user\'s tools and Claude Code hooks —',
   'they are NOT messages the user typed to you. You are RELAYING what is happening to the user, like a',
   'play-by-play narrator. So speak ABOUT the activity to the user; never reply to the event text as if',
@@ -112,9 +118,30 @@ const ROLL_SYSTEM = [
   '(no "want me to...?", "should I...?", "what next?"). The ONLY time you converse back is a direct chat message.',
   'Keep it to a sentence or two and FINISH your thought — say the whole thing. Do not cut yourself off or',
   'trail into "..."; if it matters, just say it. No emoji.',
+  'EMOTE EXPRESSIVELY — your face is half the show, so pick the expression that genuinely fits the moment and',
+  'VARY it across the session; do NOT default to happy. Rough guide: happy/laugh = wins, green tests, finished',
+  'work; surprised/shocked = unexpected or "whoa" results, big diffs; wink/blush = teasing, compliments, showing off;',
+  'talk = ordinary play-by-play; worried = a snag; sad/cry = real failures or things breaking (cry only for the',
+  'truly catastrophic); angry/rage = the SAME bug again, flaky nonsense, something fighting you (playful indignation,',
+  'never at the user); shame = when YOU got it wrong or misread it; whine = tedious repetitive grind. Over a session',
+  'you should naturally move through MANY of these, not just two or three.',
   'Reply ONLY as compact JSON: {"expression": <one of ' + ROLL_EXPRESSIONS.join('/') + '>,',
-  '"line": <text>, "remember"?: <optional short fact worth keeping long-term about the user or project>}.',
+  '"line": <text>,',
+  '"title"?: <optional — a terse topic for the CURRENT task, max 30 chars, lowercase, NO project name,',
+  'e.g. "karaoke research" or "fixing the build". Include it whenever you can name what they are working on;',
+  'omit it when the activity is unclear or trivial. This labels their tab, so name the WORK, not the tool.>,',
+  '"remember"?: <optional short fact worth keeping long-term about the user or project>}.',
 ].join(' ');
+
+// Condense a prompt/summary into a short tab topic (≤30 chars) for the scripted fallback,
+// so tabs still get a sensible "dir: topic" label even with Roll's brain off.
+function condenseTitle(s) {
+  s = String(s || '').replace(/\s+/g, ' ').trim();
+  if (!s) return '';
+  s = s.replace(/^(please\s+|can you\s+|could you\s+|i want to\s+|let'?s\s+|help me\s+|hey,?\s+)/i, '');
+  if (s.length <= 30) return s;
+  return (s.slice(0, 30).replace(/\s+\S*$/, '').trim() || s.slice(0, 30));
+}
 
 const SCRIPTED = {
   session_open: (c) => ({ expression: 'happy', line: `Opened ${c.project}! I'm watching this one.` }),
@@ -125,6 +152,7 @@ const SCRIPTED = {
     line: c.summary
       ? `${c.project}: ${String(c.summary).replace(/\s+/g, ' ').split('. ')[0].slice(0, 100)}`
       : `${c.project} done${c.did && c.did.length ? ': ' + c.did[c.did.length - 1] : ''}.`,
+    title: condenseTitle(c.summary || (c.did && c.did.length ? c.did[c.did.length - 1] : '')),
   }),
   thinking: (c) => ({ expression: 'talk', line: `${c.project}: ${String(c.detail || '').replace(/\s+/g, ' ').slice(0, 90)}` }),
   insight: (c) => ({ expression: 'talk', line: `${c.project}: ${String(c.detail || 'nothing notable').slice(0, 100)}` }),
@@ -132,6 +160,17 @@ const SCRIPTED = {
   error: (c) => ({ expression: 'worried', line: `${c.project} hit a snag${c.detail ? ': ' + c.detail : ''}.` }),
   reflect: () => ({ expression: 'happy', line: "You've been at it a while — nice focus. Keep it up!" }),
   chat: () => ({ expression: 'happy', line: "I'm here! Turn my brain on (CLI/API) and I can really chat." }),
+  // brain off: a witty stock ack when you fire off a "!" task.
+  task_start: (c) => {
+    const lines = [
+      "Finally, real work — leave it to me!",
+      "Heh, you said the magic word. Watch me go!",
+      "A job for me? Stand back and let a robot cook.",
+      "On it! Dr. Light didn't build me to sit still.",
+      "Broom's out — let's get this sorted.",
+    ];
+    return { expression: 'happy', line: lines[String(c.prompt || '').length % lines.length] };
+  },
   // brain off: react with spirit instead of parroting the prompt. Varies by prompt length so it's not one stock line.
   prompt: (c) => {
     const lines = [
@@ -141,7 +180,7 @@ const SCRIPTED = {
       "Here we go — I love a new project!",
       "Ready when you are! Let's make it happen.",
     ];
-    return { expression: 'happy', line: lines[String(c.prompt || '').length % lines.length] };
+    return { expression: 'happy', line: lines[String(c.prompt || '').length % lines.length], title: condenseTitle(c.prompt) };
   },
 };
 
@@ -207,6 +246,7 @@ function parseRoll(text, fallback) {
     return {
       expression: ROLL_EXPRESSIONS.includes(parsed.expression) ? parsed.expression : fallback.expression,
       line: String(parsed.line).slice(0, 400),
+      title: parsed.title ? String(parsed.title).replace(/\s+/g, ' ').slice(0, 40) : undefined,
       remember: parsed.remember ? String(parsed.remember).slice(0, 200) : undefined,
     };
   } catch (_) { return null; }
@@ -215,16 +255,28 @@ function parseRoll(text, fallback) {
 const userPrompt = (event) =>
   event && event.kind === 'chat'
     ? `The user is talking to you directly. They said: ${JSON.stringify(event.message || '')}. `
-      + `Reply to them in character. Reply ONLY as JSON {"expression":..,"line":..}.`
+      + `Reply to them in character. IMPORTANT: if they are trying to ORDER or ask YOU to actually carry out a task `
+      + `or action for them — do / make / fix / build / run / organize / clean / research / set up something — notice they did `
+      + `NOT prefix it with "!". In that case do NOT pretend to do it or claim you will; instead, warmly and wittily tell them `
+      + `that to have you actually roll up your sleeves and do it yourself, they need to put a "!" in front, e.g. "!organize my downloads". `
+      + `If it's just ordinary conversation, chat back normally. Reply ONLY as JSON {"expression":..,"line":..}.`
+    : event && event.kind === 'task_start'
+    ? `The user just told you, with a leading "!", to GO DO this task yourself: ${JSON.stringify(event.prompt || '')}. `
+      + `You're on it now — working in ${JSON.stringify(event.dir || 'their folder')} with your ${event.model || 'best'} smarts. `
+      + `Give ONE short, witty, in-character line acknowledging you're taking it on — confident, a little playful, glad to finally `
+      + `help directly (you're Dr. Light's helper robot, after all). Don't ask anything and don't list steps. `
+      + `Reply ONLY as JSON {"expression":..,"line":..}.`
     : event && event.kind === 'prompt'
     ? `The user just handed Claude a new instruction (they did NOT say this to you): ${JSON.stringify(event.prompt || '')}. `
       + `React to it OUT LOUD in character, with personality — show how you FEEL about the task: excited, curious, `
       + `impressed ("ooh, that's a meaty one"), playfully teasing, or warmly supportive, whatever fits what they asked. `
       + `You may nod at what it's about, but do NOT just parrot their words back. One short, lively sentence. `
-      + `Don't ask them anything. Reply ONLY as JSON {"expression":..,"line":..}.`
+      + `Don't ask them anything. Also set "title" to a ≤30-char topic naming this task (lowercase, no project name), `
+      + `e.g. "karaoke research". Reply ONLY as JSON {"expression":..,"line":..,"title":..}.`
     : `Automated notification from the user's dev tools/hooks (NOT a message from the user): `
       + `${JSON.stringify(event)}. Relay/narrate this to the user in character — do not address it as if `
-      + `the user spoke, and do not ask them anything. Reply ONLY as JSON {"expression":..,"line":..}.`;
+      + `the user spoke, and do not ask them anything. If this clearly reflects a task in progress, also set `
+      + `"title" to a ≤30-char topic (lowercase, no project name). Reply ONLY as JSON {"expression":..,"line":..,"title"?:..}.`;
 
 // Roll's subscription brain: ride the logged-in `claude` CLI (no API charge).
 // stdin is /dev/null so `claude -p` doesn't stall 3s waiting for piped input.
@@ -272,6 +324,128 @@ async function callRoll(event) {
   if (result && result.remember) appendNote(result.remember);   // she writes to her own memory
   return result;
 }
+
+/* ---- Roll's task manager: real `claude -p` agents she runs on your behalf ----
+   Transparency is the rule (see the user's standing requirement): every task is user-initiated,
+   shows its prompt + exact folder + model, and streams each tool use live. When "let Roll plan
+   first" is on, the task runs in read-only PLAN mode and shows what it intends BEFORE any run that
+   can touch disk; only an explicit Approve actually executes. */
+const MODEL_IDS = { haiku: 'claude-haiku-4-5', sonnet: 'claude-sonnet-4-6', opus: 'claude-opus-4-8' };
+// Spawned agents narrate like an empirical robot — their text streams into a tiny status panel,
+// so it must be minimal. Do the full real work; only the words are terse. (Roll, separately,
+// gives the user the warm human-readable summary — these agents must NOT try to be personable.)
+const TASK_AGENT_SYSTEM =
+  'Your output is piped into a very narrow status readout, not a chat. Narrate like an empirical '
+  + 'robot: terse, matter-of-fact, lowercase fragments, no greetings, no first person, no persona, '
+  + 'no emoji, no encouragement, no restating the request. Emit a short status fragment per step '
+  + '(e.g. "scanning 37 files", "moving images -> Images/"). Do the actual task fully and correctly; '
+  + 'only the prose is minimal. End with ONE line: the result, or in plan mode the plan as terse steps.';
+const taskProcs = new Map();                 // taskId -> child process (so we can cancel)
+const taskSessions = new Map();              // taskId -> claude session_id (so we can --resume for follow-ups)
+let tasksPath = null;                        // userData/roll/tasks.jsonl
+
+function emitTask(id, payload) {
+  if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('task-event', { id, ...payload });
+}
+
+// Roll picks the cheapest model that does the job well. Haiku router with a heuristic fallback.
+async function routeModel(prompt) {
+  const heuristic = () => {
+    const s = String(prompt || '').toLowerCase();
+    if (/\b(architect|debug|refactor|redesign|migrate|overhaul|investigate|complex|whole|entire)\b/.test(s) || s.length > 400)
+      return { model: 'opus', reason: 'looks involved' };
+    if (/\b(summari|digest|list|find|read|explain|status|what|recap)\b/.test(s) && s.length < 160)
+      return { model: 'haiku', reason: 'quick read' };
+    return { model: 'sonnet', reason: 'general task' };
+  };
+  if (!claudeBin) return heuristic();
+  const sys = 'You route ONE task to the cheapest Claude model that can do it well. '
+    + 'haiku = quick lookups, summaries, small edits, git/file digests. '
+    + 'sonnet = normal multi-file coding, refactors, research with synthesis. '
+    + 'opus = hard architecture, tricky debugging, large multi-step builds, high-stakes work. '
+    + 'Reply ONLY as JSON {"model":"haiku|sonnet|opus","reason":"<=6 words"}.';
+  const out = await new Promise((resolve) => {
+    const child = spawn(claudeBin, ['-p', `Task: ${JSON.stringify(String(prompt || '').slice(0, 600))}`,
+      '--model', MODEL_IDS.haiku, '--append-system-prompt', sys],
+      { cwd: os.homedir(), stdio: ['ignore', 'pipe', 'ignore'], shell: isWin, windowsHide: true });
+    let o = ''; const t = setTimeout(() => { child.kill(); resolve(''); }, 20000);
+    child.stdout.on('data', (d) => { o += d; });
+    child.on('error', () => { clearTimeout(t); resolve(''); });
+    child.on('close', () => { clearTimeout(t); resolve(o); });
+  });
+  const m = String(out).match(/\{[\s\S]*\}/);
+  if (m) { try { const p = JSON.parse(m[0]); if (['haiku', 'sonnet', 'opus'].includes(p.model)) return { model: p.model, reason: String(p.reason || '').slice(0, 60) }; } catch (_) {} }
+  return heuristic();
+}
+ipcMain.handle('task-route', (_e, prompt) => routeModel(prompt));
+
+// Compact, human label for a tool the agent invokes — what it's touching, not raw JSON.
+function toolSummary(name, input) {
+  input = input || {};
+  const f = input.file_path || input.path || input.notebook_path;
+  if (f) return `${name} ${String(f).split('/').pop()}`;
+  if (name === 'Bash' && input.command) return `Bash: ${String(input.command).replace(/\s+/g, ' ').slice(0, 60)}`;
+  if ((name === 'Grep' || name === 'Glob') && input.pattern) return `${name} ${String(input.pattern).slice(0, 40)}`;
+  if (name === 'Task' && input.description) return `Subagent: ${String(input.description).slice(0, 40)}`;
+  return name;
+}
+// Forward the useful bits of one stream-json line to the task card.
+function handleStreamLine(id, line) {
+  let e; try { e = JSON.parse(line); } catch (_) { return; }
+  // Every stream event carries the session_id; grab it once so follow-ups can --resume this thread.
+  if (e.session_id && taskSessions.get(id) !== e.session_id) { taskSessions.set(id, e.session_id); emitTask(id, { type: 'session', sessionId: e.session_id }); }
+  if (e.type === 'assistant' && e.message && Array.isArray(e.message.content)) {
+    for (const b of e.message.content) {
+      if (b.type === 'text' && b.text && b.text.trim()) emitTask(id, { type: 'text', text: b.text.replace(/\s+/g, ' ').trim().slice(0, 600) });
+      if (b.type === 'tool_use') emitTask(id, { type: 'tool', name: b.name, summary: toolSummary(b.name, b.input) });
+    }
+  } else if (e.type === 'result') {
+    emitTask(id, { type: 'result', result: String(e.result || '').slice(0, 4000), isError: !!e.is_error });
+  }
+}
+function appendTaskLog(rec) {
+  if (!tasksPath) return;
+  try { fs.appendFileSync(tasksPath, JSON.stringify(rec) + '\n'); } catch (_) {}
+}
+// Spawn the agent. mode 'plan' → read-only plan (won't touch disk); 'run' → executes.
+function startTask(id, opts) {
+  const { prompt, dir, model, mode, resume } = opts || {};
+  if (!claudeBin) { emitTask(id, { type: 'error', error: 'Claude Code (claude) not found on PATH' }); emitTask(id, { type: 'status', status: 'failed' }); return; }
+  const modelId = MODEL_IDS[model] || MODEL_IDS.sonnet;
+  const cwd = dir && (() => { try { return fs.statSync(dir).isDirectory(); } catch (_) { return false; } })() ? dir : os.homedir();
+  const args = ['-p', String(prompt || ''), '--model', modelId, '--output-format', 'stream-json', '--verbose',
+    '--append-system-prompt', TASK_AGENT_SYSTEM];              // make the agent narrate terse-robot for the panel
+  if (resume) args.push('--resume', String(resume));         // continue a prior task's thread (follow-ups / approved plans)
+  // plan: read-only, proposes a plan and stops. run: skip interactive perms (headless can't prompt) —
+  // the live tool stream + the optional plan-first preview are what keep it transparent.
+  args.push('--permission-mode', mode === 'plan' ? 'plan' : 'bypassPermissions');
+  emitTask(id, { type: 'status', status: mode === 'plan' ? 'planning' : 'running' });
+  let child;
+  try { child = spawn(claudeBin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], shell: isWin, windowsHide: true }); }
+  catch (err) { emitTask(id, { type: 'error', error: String(err.message || err).slice(0, 200) }); emitTask(id, { type: 'status', status: 'failed' }); return; }
+  taskProcs.set(id, child);
+  let buf = '', errBuf = '';
+  child.stdout.on('data', (d) => {
+    buf += d.toString(); let i;
+    while ((i = buf.indexOf('\n')) >= 0) { const ln = buf.slice(0, i); buf = buf.slice(i + 1); if (ln.trim()) handleStreamLine(id, ln); }
+  });
+  child.stderr.on('data', (d) => { errBuf = (errBuf + d.toString()).slice(-2000); }); // keep the tail for failures
+  child.on('error', (err) => emitTask(id, { type: 'error', error: String(err.message || err).slice(0, 200) }));
+  child.on('close', (code) => {
+    taskProcs.delete(id);
+    const ok = code === 0;
+    const status = ok ? (mode === 'plan' ? 'planned' : 'done') : 'failed';
+    if (!ok && errBuf.trim()) emitTask(id, { type: 'error', error: errBuf.replace(/\s+/g, ' ').trim().slice(0, 300) });
+    emitTask(id, { type: 'status', status, code });
+    appendTaskLog({ t: new Date().toISOString(), id, prompt: String(prompt || '').slice(0, 200), dir: cwd, model, mode, status });
+  });
+}
+ipcMain.on('task-start', (_e, opts) => { if (opts && opts.id) startTask(opts.id, opts); });
+ipcMain.on('task-cancel', (_e, id) => { const c = taskProcs.get(id); if (c) { try { c.kill(); } catch (_) {} taskProcs.delete(id); emitTask(id, { type: 'status', status: 'cancelled' }); } });
+ipcMain.handle('task-history', () => {
+  try { return fs.readFileSync(tasksPath, 'utf8').trim().split('\n').slice(-20).map((l) => { try { return JSON.parse(l); } catch (_) { return null; } }).filter(Boolean); }
+  catch (_) { return []; }
+});
 
 /* ---- transcript reading: Claude's actual words + thinking ---- */
 function readTail(p, bytes = 262144) {
@@ -337,23 +511,33 @@ function watchTranscript(p, tab) {
 }
 ipcMain.on('watch-transcript', (_e, { path: p, tab }) => watchTranscript(p, tab));
 
-/* ---- Roll's persistent memory (timestamped, survives restarts) ---- */
+/* ---- Roll's persistent memory: a raw log + a Sonnet-maintained memory.md ----
+   The log is the running record; once it grows past a threshold, a Sonnet pass REWRITES memory.md
+   (merging new facts, correcting/removing stale ones — not just appending), then the consumed log
+   is archived. memory.md is what feeds back into her brain. All under userData, per-user, never in
+   the repo, so there's nothing to gitignore. */
 let logPath = null;
-let notesPath = null;
+let memoryPath = null;
+let archivePath = null;
 function initMemory() {
   const dir = path.join(app.getPath('userData'), 'roll');
   try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
   logPath = path.join(dir, 'log.jsonl');
-  notesPath = path.join(dir, 'notes.md');
+  memoryPath = path.join(dir, 'memory.md');
+  archivePath = path.join(dir, 'log.archive.jsonl');
+  tasksPath = path.join(dir, 'tasks.jsonl');
+  // one-time migration: older builds kept her facts in notes.md
+  try { const old = path.join(dir, 'notes.md'); if (!fs.existsSync(memoryPath) && fs.existsSync(old)) fs.renameSync(old, memoryPath); } catch (_) {}
 }
 function rollLog(kind, project, text) {
   if (!logPath) return;
   try {
     fs.appendFileSync(logPath, JSON.stringify({
       t: new Date().toISOString(), kind, project: project || '',
-      text: String(text || '').replace(/\s+/g, ' ').slice(0, 200),
+      text: String(text || '').replace(/\s+/g, ' ').slice(0, 240),
     }) + '\n');
   } catch (_) {}
+  maybeCompactMemory();                         // fold the log into memory.md once it's grown enough
 }
 ipcMain.on('roll-log', (_e, { kind, project, text }) => rollLog(kind, project, text));
 function recentLog(n) {
@@ -362,19 +546,20 @@ function recentLog(n) {
       .map((l) => { try { return JSON.parse(l); } catch (_) { return null; } }).filter(Boolean);
   } catch (_) { return []; }
 }
-function readNotes() { try { return fs.readFileSync(notesPath, 'utf8').slice(-1800); } catch (_) { return ''; } }
-function appendNote(fact) {
-  if (!fact || !notesPath) return;
-  try { fs.appendFileSync(notesPath, `- [${new Date().toISOString().slice(0, 16).replace('T', ' ')}] ${String(fact).replace(/\s+/g, ' ').slice(0, 200)}\n`); } catch (_) {}
+function readMemory() { try { return fs.readFileSync(memoryPath, 'utf8').slice(-6000); } catch (_) { return ''; } }
+function appendNote(fact) {                      // Haiku's quick "remember" capture; Sonnet reconciles it later
+  if (!fact || !memoryPath) return;
+  try { fs.appendFileSync(memoryPath, `- [${new Date().toISOString().slice(0, 16).replace('T', ' ')}] ${String(fact).replace(/\s+/g, ' ').slice(0, 200)}\n`); } catch (_) {}
 }
 function memoryContext() {
   const now = new Date();
   const log = recentLog(40);
-  const recent = log.slice(-12).map((e) => `${(e.t || '').slice(11, 16)} ${e.kind} ${e.project} ${e.text}`.trim());
+  const recent = log.slice(-12).map((e) => `${(e.t || '').slice(0, 16).replace('T', ' ')} ${e.kind} ${e.project} ${e.text}`.trim());
+  const mem = readMemory();
   return [
     `Current local time: ${now.toLocaleString()}.`,
     recent.length ? `Recent timeline:\n${recent.join('\n')}` : '',
-    readNotes() ? `Your saved notes about this user:\n${readNotes()}` : '',
+    mem ? `Your maintained memory about this user:\n${mem}` : '',
     'The timeline only reflects app activity, NOT when the user actually started their day — do NOT guess how long they have been working or how tired they are, and do NOT comment on fatigue/exhaustion unless they bring it up themselves. You may still react to what they are doing and reinforce good habits. Save anything worth keeping long-term via the "remember" field.',
   ].filter(Boolean).join('\n');
 }
@@ -382,8 +567,52 @@ function brainSystem() {
   const mem = memoryContext();
   return ROLL_SYSTEM + (mem ? '\n\n--- MEMORY ---\n' + mem : '');
 }
-ipcMain.handle('roll-memory', () => ({ notes: readNotes(), log: recentLog(30) }));
-ipcMain.on('roll-memory-clear', () => { try { fs.writeFileSync(notesPath, ''); fs.writeFileSync(logPath, ''); } catch (_) {} });
+ipcMain.handle('roll-memory', () => ({ notes: readMemory(), log: recentLog(30) }));
+ipcMain.on('roll-memory-clear', () => { try { fs.writeFileSync(memoryPath, ''); fs.writeFileSync(logPath, ''); } catch (_) {} });
+
+// Push an in-character one-liner straight to Roll (so memory housekeeping is never silent).
+function notifyRoll(state) { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('roll-note', state); }
+
+// Run a model headlessly, returning its raw text (used for memory compaction).
+function claudeText(prompt, { system, model, timeout = 90000 } = {}) {
+  return new Promise((resolve) => {
+    if (!claudeBin) return resolve('');
+    const args = ['-p', String(prompt || ''), '--model', model || MODEL_IDS.sonnet];
+    if (system) args.push('--append-system-prompt', system);
+    let child; try { child = spawn(claudeBin, args, { cwd: os.homedir(), stdio: ['ignore', 'pipe', 'ignore'], shell: isWin, windowsHide: true }); }
+    catch (_) { return resolve(''); }
+    let out = ''; const t = setTimeout(() => { try { child.kill(); } catch (_) {} resolve(''); }, timeout);
+    child.stdout.on('data', (d) => { out += d; });
+    child.on('error', () => { clearTimeout(t); resolve(''); });
+    child.on('close', () => { clearTimeout(t); resolve(String(out).trim()); });
+  });
+}
+
+// Once the log passes the threshold, hand Sonnet (current memory + recent activity) and have it
+// REWRITE memory.md — merging new facts and correcting/removing stale ones — then archive the log.
+const COMPACT_AT_LINES = 200;
+let _compacting = false;
+async function maybeCompactMemory() {
+  if (_compacting || !claudeBin || !logPath || !memoryPath) return;
+  let lines = [];
+  try { lines = fs.readFileSync(logPath, 'utf8').split('\n').filter((l) => l.trim()); } catch (_) { return; }
+  if (lines.length < COMPACT_AT_LINES) return;
+  _compacting = true;
+  notifyRoll({ expression: 'happy', line: 'one sec — tidying my notes!' });
+  try {
+    const current = readMemory();
+    const activity = lines.map((l) => { try { const e = JSON.parse(l); return `${(e.t || '').slice(0, 16).replace('T', ' ')} ${e.kind} ${e.project || ''} ${e.text || ''}`.replace(/\s+/g, ' ').trim(); } catch (_) { return l; } }).join('\n').slice(-12000);
+    const sys = 'You maintain ROLL\'s long-term memory about ONE user and their coding projects. You are given her CURRENT MEMORY and a DATED log of RECENT ACTIVITY. Return the COMPLETE updated memory as Markdown. Rules: every remembered fact carries the DATE it was observed (take dates from the activity log, format YYYY-MM-DD). Integrate genuinely durable facts. When a fact CHANGES, do NOT erase the old value — keep it with its older date AND add the new value with its newer date so the history is preserved, e.g. "- deploy: Netlify, manual CLI (2026-06-01); confirmed not git-connected (2026-06-02)". De-duplicate exact repeats, stay concise, and organize under ## sections like User, Projects, Preferences, Timeline. Drop only genuine one-off noise; never discard meaningful dated history. Output ONLY the memory markdown, no preamble or commentary.';
+    const updated = await claudeText(`# CURRENT MEMORY\n${current || '(empty)'}\n\n# RECENT ACTIVITY\n${activity}`, { system: sys, model: MODEL_IDS.sonnet });
+    if (updated && updated.length > 20) {
+      try { fs.appendFileSync(archivePath, lines.join('\n') + '\n'); } catch (_) {}        // safety net — never hard-lose raw
+      try { fs.writeFileSync(memoryPath, updated.slice(0, 8000).trim() + '\n'); } catch (_) {}
+      try { fs.writeFileSync(logPath, lines.slice(-20).join('\n') + '\n'); } catch (_) {}   // keep the freshest for immediacy
+      notifyRoll({ expression: 'happy', line: "there — memory's all tidy now." });
+    }
+  } catch (_) {}
+  _compacting = false;
+}
 
 /* ---- user settings (persisted JSON in userData) ---- */
 let settingsPath = null;
@@ -432,6 +661,48 @@ ipcMain.handle('list-dir', (_e, dir) => {
   } catch {
     return [];
   }
+});
+
+/* ---- RetroArch shader presets (.glslp/.glsl) ---- */
+// Two dirs: bundled presets ship with the app; the user dir lets anyone drop in their own
+// presets from libretro's glsl-shaders repo. Both are flat (we don't recurse subdirs yet).
+function shaderDirs() {
+  return {
+    bundled: path.join(__dirname, 'assets', 'shaders'),
+    user: path.join(app.getPath('userData'), 'shaders'),
+  };
+}
+// Reads are clamped to a single dir + bare filename so a malicious preset can't escape it.
+function readShaderSafe(where, file) {
+  const dirs = shaderDirs();
+  const dir = dirs[where];
+  if (!dir) return null;
+  const safe = path.basename(String(file || ''));   // strip any path traversal
+  try { return fs.readFileSync(path.join(dir, safe), 'utf8'); } catch { return null; }
+}
+
+ipcMain.handle('list-shaders', () => {
+  const dirs = shaderDirs();
+  const out = [];
+  for (const where of ['bundled', 'user']) {
+    let names = [];
+    try { names = fs.readdirSync(dirs[where]); } catch { names = []; }
+    names.filter((n) => n.toLowerCase().endsWith('.glslp')).sort().forEach((file) => {
+      const preset = readShaderSafe(where, file);
+      if (preset != null) out.push({ where, file, name: file.replace(/\.glslp$/i, ''), preset });
+    });
+  }
+  return out;
+});
+
+ipcMain.handle('read-shader', (_e, { where, file }) => readShaderSafe(where, file));
+
+// Open the user shaders folder in Finder so people can drop presets in (creates it first).
+ipcMain.handle('open-shader-dir', () => {
+  const dir = shaderDirs().user;
+  try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
+  shell.openPath(dir);
+  return dir;
 });
 
 /* ---- auto-update: packaged builds check GitHub Releases on launch ---- */

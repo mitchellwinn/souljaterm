@@ -32,6 +32,20 @@ const el = {
   assistantMin: document.getElementById('assistant-min'),
   assistantPopout: document.getElementById('assistant-popout'),
   assistantRestore: document.getElementById('assistant-restore'),
+  fxPick: document.getElementById('fx-pick'),
+  fxEdit: document.getElementById('fx-edit'),
+  fxModal: document.getElementById('fx-modal'),
+  fxClose: document.getElementById('fx-close'),
+  fxEnabled: document.getElementById('fx-enabled'),
+  fxPreset: document.getElementById('fx-preset'),
+  fxSurfTerminal: document.getElementById('fx-surf-terminal'),
+  fxSurfRollface: document.getElementById('fx-surf-rollface'),
+  fxParams: document.getElementById('fx-params'),
+  fxFolder: document.getElementById('fx-folder'),
+  fxReload: document.getElementById('fx-reload'),
+  fxSource: document.getElementById('fx-source'),
+  fxApply: document.getElementById('fx-apply'),
+  fxError: document.getElementById('fx-error'),
 };
 
 /* ---- color: projects fanned across the rainbow, alphabetical ---- */
@@ -113,7 +127,7 @@ function newTab(cwd) {
     catch (_) { /* fall back to canvas */ }
   }
 
-  const tab = { id, term, fit, host, cwd, title: prettyName(cwd), el: null, status: 'idle' };
+  const tab = { id, term, fit, host, cwd, title: prettyName(cwd), activity: '', el: null, status: 'idle' };
   tabs.push(tab);
 
   // Refit on ANY size change to the active tab's host — window resize, sidebar toggle, minimize,
@@ -166,11 +180,24 @@ function paintTab(tab) {
   tab.el.style.setProperty('--tab-bg', c.tabBg);
   tab.el.style.setProperty('--tab-bg-active', c.tabBgActive);
   tab.el.style.setProperty('--tab-fg', c.tabFg);
-  tab.el.querySelector('.label').textContent = tab.title;
+  // Label is "dir: what's happening" once Roll has named the task; just the dir otherwise.
+  const label = tab.activity ? `${tab.title}: ${tab.activity}` : tab.title;
+  tab.el.querySelector('.label').textContent = label;
+  tab.el.title = label;   // full text on hover, since background tabs ellipsize
+}
+// Roll names the current task (≤30 chars); we hang it off the tab as "dir: topic".
+// A new topic replaces the old; an empty one leaves the last topic alone.
+function setTabActivity(tab, title) {
+  if (!tab || !tab.el) return;
+  const a = String(title || '').replace(/\s+/g, ' ').trim().slice(0, 30);
+  if (!a || tab.activity === a) return;
+  tab.activity = a;
+  paintTab(tab);
 }
 function setCwd(tab, cwd) {
   if (tab.cwd === cwd) return;
   tab.cwd = cwd; tab.title = prettyName(cwd);
+  tab.activity = '';            // moved to a new project → drop the old topic
   paintTab(tab);
   if (tab === active) applyTint(cwd);
 }
@@ -318,20 +345,32 @@ let lastRoll = { expression: 'happy', line: "Hi! I'm Roll. I'll keep an eye on y
 // flips exactly when the line it belongs to starts typing (Roll queues lines, so the state we
 // hand renderRoll isn't always the one on screen yet). A state with no `tab` hides the header.
 let _msgTabId = null;
-function setMsgTab(tab) {
+let _msgTaskId = null;
+function setMsgHeader(state) {
   const node = el.msgTab;
   if (!node) return;
-  if (!tab) { node.hidden = true; _msgTabId = null; return; }
-  const c = colorForPath(tab.cwd);
-  node.style.setProperty('--msg-tab-bg', c.tabBgActive);
-  node.style.setProperty('--msg-tab-fg', c.tabFg);
-  node.textContent = tab.title;
-  node.hidden = false;
-  _msgTabId = tab.id;
+  const rt = state && state.rollTask;                               // one of Roll's own "!" tasks
+  const tab = state && state.tab ? tabs.find((t) => t.id === state.tab) : null;
+  node.classList.toggle('roll-task', !!rt);
+  if (rt) {                                                         // ROLL-themed header: "ROLL: <task>"
+    node.style.removeProperty('--msg-tab-bg');
+    node.style.removeProperty('--msg-tab-fg');
+    node.textContent = 'ROLL: ' + rt.label;
+    node.hidden = false;
+    _msgTaskId = rt.id; _msgTabId = null;
+  } else if (tab) {                                                 // a project session: its colored tab name
+    const c = colorForPath(tab.cwd);
+    node.style.setProperty('--msg-tab-bg', c.tabBgActive);
+    node.style.setProperty('--msg-tab-fg', c.tabFg);
+    node.textContent = tab.title;
+    node.hidden = false;
+    _msgTabId = tab.id; _msgTaskId = null;
+  } else { node.hidden = true; _msgTabId = null; _msgTaskId = null; return; }
   node.classList.remove('flash'); void node.offsetWidth; node.classList.add('flash'); // re-trigger flash
 }
-rollFace.onStart = (state) => setMsgTab(state && state.tab ? tabs.find((t) => t.id === state.tab) : null);
+rollFace.onStart = (state) => setMsgHeader(state);
 if (el.msgTab) el.msgTab.addEventListener('click', () => {
+  if (_msgTaskId) { openTasks(); highlightTaskCard(_msgTaskId); return; } // her own task → open the panel on it
   const t = tabs.find((x) => x.id === _msgTabId);
   if (t) activate(t);
 });
@@ -355,6 +394,8 @@ function pickClip(s) {
 let poppedOut = false;
 function renderRoll(state) {
   lastRoll = state;
+  // If Roll named the task, retitle its tab as "dir: topic" (rides the brain calls she already makes).
+  if (state.title && state.tab) setTabActivity(tabs.find((t) => t.id === state.tab), state.title);
   if (state.clip === undefined) state.clip = pickClip(state); // choose her exclamation (or none)
   if (!poppedOut) rollFace.speak(state);    // popped out → the pop-out window does the talking, not the hidden dock
   window.souljaterm.assistantRender(state); // mirror to pop-out window if open
@@ -415,10 +456,10 @@ function summarizeResult(name, input, response) {
       const err = oneline(obj.stderr);
       const code = obj.exit_code ?? obj.returnCode ?? obj.code;
       if (err && code !== 0 && /error|fail|fatal|not found|denied|traceback|exception|cannot/i.test(err))
-        return { expr: 'worried', line: `that errored: ${clip(err, 55)}`, notable: true, llm: true, detail: clip(err, 300) };
+        return { expr: 'worried', line: `that errored: ${clip(err, 55)}`, notable: true, llm: true, raw: true, detail: clip(err, 300) };
       const out = oneline(obj.stdout || txt);
       if (!out) return { expr: 'neutral', line: 'command done, no output', notable: false };
-      return { expr: 'talk', line: clip(out, 70), notable: true, llm: true, detail: clip(out, 400) };
+      return { expr: 'talk', line: clip(out, 70), notable: true, llm: true, raw: true, detail: clip(out, 400) };
     }
     case 'Grep': case 'Glob': {
       if (!txt || /no matches|no files|^0\b/i.test(oneline(txt)))
@@ -431,9 +472,9 @@ function summarizeResult(name, input, response) {
     case 'Edit': case 'Write': case 'MultiEdit': case 'NotebookEdit':
       return { expr: 'happy', line: `saved ${fileBase(input.file_path || input.notebook_path)}`, notable: true, llm: false };
     case 'WebFetch': case 'WebSearch':
-      return { expr: 'neutral', line: clip(txt || 'looked it up', 70), notable: true, llm: true, detail: clip(txt, 400) };
+      return { expr: 'neutral', line: clip(txt || 'looked it up', 70), notable: true, llm: true, raw: true, detail: clip(txt, 400) };
     case 'Task':
-      return { expr: 'surprised', line: clip(txt || 'subagent finished', 70), notable: true, llm: true, detail: clip(txt, 400) };
+      return { expr: 'surprised', line: clip(txt || 'subagent finished', 70), notable: true, llm: true, raw: true, detail: clip(txt, 400) };
     case 'TodoWrite':
       return { expr: 'neutral', line: 'updated the plan', notable: false, llm: false };
     default:
@@ -474,7 +515,9 @@ function narrateClaude(evt) {
     // to what it reveals. Otherwise drop the cheap scripted fact (free, throttled).
     if (r.notable && r.llm && now - _lastRollAt >= ROLL_COOLDOWN_MS) {
       roll('insight', { project: proj, tool: h.tool_name, detail: r.detail || r.line, did: (toolBuffer[evt.tab] || []).slice(-8), tab: evt.tab });
-    } else if (r.notable) {
+    } else if (r.notable && !r.raw) {
+      // Only paraphrased facts (found N hits, saved X, no matches) go through the free path.
+      // Raw tool output never gets echoed verbatim — it waits for her brain to put it in her words.
       const key = `${evt.tab}:${r.line}`;
       if (now - _microAt < 2500 || key === _microKey) return; // light throttle, no instant dupes
       _microAt = now; _microKey = key;
@@ -527,12 +570,18 @@ setInterval(() => { if (tabs.length) roll('reflect', { project: active ? active.
 // Direct chat to Roll (chat bar, or a prompt that mentions her) — bypasses the cooldown.
 async function chatToRoll(message) {
   if (!message || !message.trim()) return;
+  const m = message.trim();
+  if (m === '!') { openTasks(); return; }                          // bare "!" → just open the task panel
+  if (m.startsWith('!')) { launchTask(m.slice(1).trim()); return; } // "!do something" → Roll actually does it
+  window.souljaterm.rollLog('you', '', m);                          // your side of the conversation (timestamped)
   renderRoll({ expression: 'talk', line: '...' });
   try {
     const state = await window.souljaterm.rollSpeak({ kind: 'chat', message, brain: currentBrain(), tabCount: tabs.length });
-    if (state && state.line) renderRoll(state);
+    if (state && state.line) { renderRoll(state); window.souljaterm.rollLog('roll', '', state.line); } // and hers
   } catch (_) {}
 }
+// Roll's own housekeeping notices (e.g. memory compaction) — pushed from main, rendered in character.
+if (window.souljaterm.onRollNote) window.souljaterm.onRollNote((s) => { if (s && s.line && rollActive()) renderRoll(s); });
 window.souljaterm.onPopoutChat((msg) => chatToRoll(msg));
 
 // When the user fires off a prompt to Claude, Roll reacts to it with personality (brain reads the
@@ -756,6 +805,223 @@ window.souljaterm.onPopoutClosed(() => {
   rollFace.show(lastRoll);                                            // restore the docked face instantly
 });
 
+/* ---- Roll's task manager: free-form "!do this" agents she runs for you ---- */
+// No input box here on purpose — the one way to start a task is to "!type" it to Roll in her
+// chat. The panel is just the live view of what she's doing.
+const taskEls = {
+  panel: document.getElementById('tasks-panel'),
+  close: document.getElementById('tasks-close'),
+  hud: document.getElementById('tasks-hud'),
+  list: document.getElementById('task-list'),
+  empty: document.getElementById('task-empty'),
+};
+const taskCards = new Map();      // id -> { data, el, headEl, statusEl, actionsEl, logEl }
+let _hudTimer = null;
+const STATUS_LABEL = {
+  routing: 'routing…', planning: 'planning…', planned: 'plan ready',
+  running: 'running…', done: 'done', failed: 'failed', cancelled: 'cancelled',
+};
+
+function tasksOpen() { return taskEls.panel && !taskEls.panel.hidden; }
+function openTasks() {
+  if (!taskEls.panel) return;
+  taskEls.panel.hidden = false;
+  renderHud();
+  updateTaskEmpty();
+  if (!_hudTimer) _hudTimer = setInterval(renderHud, 2000);
+  requestAnimationFrame(() => active && active.fit.fit());   // terminal narrowed — refit it
+}
+// Show the getting-started blurb only while no task cards exist.
+function updateTaskEmpty() {
+  if (taskEls.empty) taskEls.empty.hidden = taskCards.size > 0;
+}
+// Scroll a task's card into view and flash it (used when you click Roll's "ROLL: <task>" header).
+function highlightTaskCard(id) {
+  const card = taskCards.get(id); if (!card) return;
+  card.el.scrollIntoView({ block: 'nearest' });
+  card.el.classList.remove('flash'); void card.el.offsetWidth; card.el.classList.add('flash');
+}
+function closeTasks() {
+  if (!taskEls.panel) return;
+  taskEls.panel.hidden = true;
+  if (_hudTimer) { clearInterval(_hudTimer); _hudTimer = null; }
+  requestAnimationFrame(() => active && active.fit.fit());   // terminal widened again — refit it
+}
+
+const HUD_ICON = { idle: '○', thinking: '◐', done: '❗', question: '❓' };
+function renderHud() {
+  if (!taskEls.hud) return;
+  if (!tabs.length) { taskEls.hud.replaceChildren(h('div', { class: 'hud-empty' }, 'no open sessions')); return; }
+  taskEls.hud.replaceChildren(...tabs.map((t) => {
+    const c = colorForPath(t.cwd);
+    const label = t.activity ? `${t.title}: ${t.activity}` : t.title;
+    const row = h('div', { class: 'hud-row' + (t === active ? ' active' : '') },
+      h('span', { class: 'hud-dot', style: `background:${c.swatch}` }),
+      h('span', { class: 'hud-name' }, label),
+      h('span', { class: 'hud-state s-' + t.status }, HUD_ICON[t.status] || ''));
+    row.title = label;
+    row.addEventListener('click', () => activate(t));
+    return row;
+  }));
+}
+
+// Launch a task: route the model if Auto, show a live card, kick off the agent, and have Roll
+// acknowledge it in character. plan-first runs read-only first and waits for Approve.
+async function launchTask(promptText, opts) {
+  opts = opts || {};
+  const prompt = String(promptText || '').trim();
+  if (!prompt) return;
+  if (!tasksOpen()) openTasks();
+  const dir = opts.dir || (taskEls.dir && taskEls.dir.value) || (active && active.cwd) || HOME;
+  const planFirst = opts.plan != null ? opts.plan : (taskEls.plan ? taskEls.plan.checked : true);
+  let model = opts.model || (taskEls.model && taskEls.model.value) || 'auto';
+  const id = `task-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
+  const card = createTaskCard(id, { prompt, dir, model, plan: planFirst });
+  if (model === 'auto') {
+    setCardStatus(id, 'routing');
+    try { const r = await window.souljaterm.taskRoute(prompt); model = r.model || 'sonnet'; card.data.reason = r.reason; }
+    catch (_) { model = 'sonnet'; }
+  }
+  card.data.model = model;
+  renderCardHead(id);
+  window.souljaterm.taskStart({ id, prompt, dir, model, mode: planFirst ? 'plan' : 'run' });
+  (async () => {                                  // witty in-character ack (her brain, with scripted fallback)
+    try {
+      const ack = await window.souljaterm.rollSpeak({ kind: 'task_start', prompt, dir, model, brain: currentBrain() });
+      if (ack && ack.line && rollActive()) renderRoll({ ...ack, kind: 'prompt', rollTask: { id, label: clip(prompt, 40) } });
+    } catch (_) {}
+  })();
+}
+
+function createTaskCard(id, data) {
+  const headEl = h('div', { class: 'task-card-head' });   // top row: model badge + status
+  const statusEl = h('span', { class: 'task-status' });
+  const promptEl = h('div', { class: 'task-prompt' });     // the asked prompt, full width, wraps
+  const actionsEl = h('div', { class: 'task-actions' });
+  const logEl = h('div', { class: 'task-log' });
+  const card = { data: { id, status: 'queued', ...data }, headEl, statusEl, promptEl, actionsEl, logEl };
+  card.el = h('div', { class: 'task-card' }, headEl, promptEl, logEl, actionsEl);
+  taskCards.set(id, card);
+  taskEls.list.prepend(card.el);
+  updateTaskEmpty();
+  renderCardHead(id);
+  renderCardActions(id);
+  return card;
+}
+function renderCardHead(id) {
+  const card = taskCards.get(id); if (!card) return;
+  const d = card.data;
+  const dismiss = h('button', { class: 'btn task-dismiss', title: 'Dismiss task' }, '×');
+  dismiss.addEventListener('click', () => removeTaskCard(id));
+  card.headEl.replaceChildren(
+    h('span', { class: 'task-model m-' + (d.model || 'auto') }, String(d.model || 'auto').toUpperCase()),
+    card.statusEl,                                          // pushed to the right of the badge row
+    dismiss,
+  );
+  card.promptEl.textContent = clip(d.prompt, 160);
+  card.promptEl.title = `${d.prompt}\n${d.dir}${d.reason ? `\nRoll picked ${d.model}: ${d.reason}` : ''}`;
+}
+// Clear a card off the list. If it's still working, cancel it first so nothing keeps running.
+function removeTaskCard(id) {
+  const card = taskCards.get(id); if (!card) return;
+  if (['routing', 'planning', 'running'].includes(card.data.status)) {
+    try { window.souljaterm.taskCancel(id); } catch (_) {}
+  }
+  card.el.remove();
+  taskCards.delete(id);
+  updateTaskEmpty();
+}
+function setCardStatus(id, status) {
+  const card = taskCards.get(id); if (!card) return;
+  card.data.status = status;
+  card.statusEl.textContent = STATUS_LABEL[status] || status;
+  card.statusEl.className = 'task-status st-' + status;
+  renderCardActions(id);
+  if (status === 'done' || status === 'failed' || status === 'cancelled') narrateTaskEnd(card.data);
+  else if (status === 'planned') narrateTaskPlanned(card.data);
+}
+function renderCardActions(id) {
+  const card = taskCards.get(id); if (!card) return;
+  const d = card.data;
+  const acts = [];
+  if (d.status === 'planned') {
+    const approve = h('button', { class: 'btn' }, '✓ Approve & run');
+    approve.addEventListener('click', () => {
+      appendTaskLine(id, '— approved, running for real —', 'sys');
+      // Resume the SAME session the plan was made in, so it executes that exact plan instead of re-planning.
+      window.souljaterm.taskStart(d.sessionId
+        ? { id, prompt: 'Approved — go ahead and carry out that plan now.', dir: d.dir, model: d.model, mode: 'run', resume: d.sessionId }
+        : { id, prompt: d.prompt, dir: d.dir, model: d.model, mode: 'run' });
+    });
+    acts.push(approve);
+  }
+  if (d.status === 'planning' || d.status === 'running') {
+    const cancel = h('button', { class: 'btn' }, '✕ Cancel');
+    cancel.addEventListener('click', () => window.souljaterm.taskCancel(id));
+    acts.push(cancel);
+  }
+  // Finished thread → let you keep going in the same context (claude --resume).
+  if ((d.status === 'done' || d.status === 'failed' || d.status === 'cancelled') && d.sessionId) {
+    const form = h('form', { class: 'task-followup' });
+    const input = h('input', { type: 'text', placeholder: 'ask Roll to keep going…' });
+    form.append(input);
+    form.addEventListener('submit', (e) => { e.preventDefault(); const v = input.value; input.value = ''; launchFollowup(id, v); });
+    acts.push(form);
+  }
+  card.actionsEl.replaceChildren(...acts);
+}
+// Continue an existing task's thread with a new instruction (remembers everything the run did).
+function launchFollowup(id, text) {
+  const card = taskCards.get(id); if (!card) return;
+  const followup = String(text || '').trim(); if (!followup) return;
+  const d = card.data;
+  if (!d.sessionId) { appendTaskLine(id, '⚠ no session to resume', 'err'); return; }
+  d._narrated = false;                                         // let her react to the follow-up's outcome too
+  appendTaskLine(id, `— follow-up: ${followup} —`, 'sys');
+  const planFirst = taskEls.plan ? taskEls.plan.checked : false;
+  window.souljaterm.taskStart({ id, prompt: followup, dir: d.dir, model: d.model, mode: planFirst ? 'plan' : 'run', resume: d.sessionId });
+}
+function appendTaskLine(id, text, cls) {
+  const card = taskCards.get(id); if (!card || !text) return;
+  card.logEl.appendChild(h('div', { class: 'log-line' + (cls ? ' log-' + cls : '') }, text));
+  card.logEl.scrollTop = card.logEl.scrollHeight;
+  while (card.logEl.childNodes.length > 200) card.logEl.removeChild(card.logEl.firstChild);
+}
+// Roll herself always stays in character — she's the one giving you the warm, readable update
+// about her agents' work (the agents themselves talk terse robot, in their own card logs). Each
+// of her task reports rides a "ROLL: <task>" header so you know which job she's talking about.
+function taskReport(d, line, expression, voiceClip) {
+  if (!rollActive()) return;
+  renderRoll({ expression, line, clip: voiceClip || null, rollTask: { id: d.id, label: clip(d.prompt, 40) } });
+}
+function narrateTaskEnd(d) {
+  if (d._narrated) return;
+  d._narrated = true;
+  const t = clip(d.prompt, 38);
+  if (d.status === 'done') taskReport(d, `Done with "${t}" — told you I'd handle it!`, 'laugh', 'yattane');
+  else if (d.status === 'failed') taskReport(d, `Eep — "${t}" hit a snag. Peek at the log?`, 'worried', 'tasukete');
+  else if (d.status === 'cancelled') taskReport(d, `Okay, I dropped "${t}".`, 'neutral');
+}
+function narrateTaskPlanned(d) {
+  taskReport(d, `Plan's ready for "${clip(d.prompt, 38)}" — wanna look it over?`, 'surprised', 'mitete');
+}
+
+window.souljaterm.onTaskEvent(({ id, type, ...p }) => {
+  const card = taskCards.get(id); if (!card) return;
+  if (type === 'session') { card.data.sessionId = p.sessionId; return; }
+  if (type === 'status') setCardStatus(id, p.status);
+  else if (type === 'tool') appendTaskLine(id, `▸ ${p.summary}`, 'tool');
+  else if (type === 'text') appendTaskLine(id, p.text, 'text');
+  else if (type === 'result') appendTaskLine(id, p.result, p.isError ? 'err' : 'result');
+  else if (type === 'error') appendTaskLine(id, `⚠ ${p.error}`, 'err');
+});
+
+function initTaskUI() {
+  const openBtn = document.getElementById('assistant-tasks');
+  if (openBtn) openBtn.addEventListener('click', () => (tasksOpen() ? closeTasks() : openTasks()));
+  if (taskEls.close) taskEls.close.addEventListener('click', closeTasks);
+}
+
 /* ---- wiring ---- */
 el.newTab.addEventListener('click', () => newTab(active ? active.cwd : HOME));
 if (el.dirPick) el.dirPick.addEventListener('click', async () => {
@@ -768,6 +1034,109 @@ window.addEventListener('resize', () => active && active.fit.fit());
 
 document.body.classList.add(window.souljaterm.platform || 'darwin'); // lets CSS tune chrome per-OS
 
+/* ---- CRT shaders (RetroArch .glslp over terminal + Roll's face) ---- */
+// Source providers: each shaded surface hands the engine a canvas/image of its current pixels.
+const termScratch = document.createElement('canvas');
+function getTerminalSource() {
+  if (!active) return null;
+  const cs = active.host.querySelectorAll('canvas');
+  if (!cs.length) return null;
+  let w = 0, h = 0;
+  cs.forEach((c) => { w = Math.max(w, c.width); h = Math.max(h, c.height); });
+  if (!w || !h) return null;
+  if (termScratch.width !== w || termScratch.height !== h) { termScratch.width = w; termScratch.height = h; }
+  const ctx = termScratch.getContext('2d');
+  ctx.fillStyle = THEME.background; ctx.fillRect(0, 0, w, h);
+  // composite xterm's canvas layers (webgl: one; canvas renderer: text/selection/cursor) in DOM order
+  cs.forEach((c) => { try { ctx.drawImage(c, 0, 0, w, h); } catch (_) {} });
+  return termScratch;
+}
+function getRollFaceSource() {
+  const img = el.face.querySelector('img');
+  if (!img || !img.complete || !img.naturalWidth) return null;
+  return img;
+}
+// The shaded rect must be the xterm GRID, not the whole #terminals box — otherwise the warp
+// stretches across the padding + scrollbar gutter and paints over the real (DOM) scrollbar.
+function terminalSurfaceEl() {
+  if (!active) return null;
+  return active.host.querySelector('.xterm-screen') || active.host.querySelector('canvas') || active.host;
+}
+
+function renderFxUI(s) {
+  // foot picker: "off" + one entry per preset
+  const cur = s.enabled && s.preset ? s.preset.where + '/' + s.preset.file : 'off';
+  const opts = ['<option value="off">off</option>']
+    .concat(s.list.map((p) => `<option value="${p.where}/${p.file}">${p.name}</option>`)).join('');
+  if (el.fxPick.dataset.sig !== opts) { el.fxPick.innerHTML = opts; el.fxPick.dataset.sig = opts; }
+  el.fxPick.value = cur;
+  if (el.fxPreset.dataset.sig !== opts) { el.fxPreset.innerHTML = opts; el.fxPreset.dataset.sig = opts; }
+  el.fxPreset.value = s.preset ? s.preset.where + '/' + s.preset.file : '';
+
+  el.fxEnabled.checked = s.enabled;
+  el.fxSurfTerminal.checked = !!s.surfaces.terminal;
+  el.fxSurfRollface.checked = !!s.surfaces.rollface;
+  el.fxError.textContent = s.error || '';
+
+  // parameter sliders (only rebuild when the parameter set changes, to not fight live dragging)
+  const sig = s.params.map((p) => p.name).join(',');
+  if (el.fxParams.dataset.sig !== sig) {
+    el.fxParams.dataset.sig = sig;
+    el.fxParams.replaceChildren(...s.params.map((p) => {
+      const wrap = h('div', { class: 'fx-param' });
+      const top = h('div', { class: 'fx-param-top' }, h('span', {}, p.desc || p.name));
+      const val = h('span', { class: 'v' }, fmt(p.value));
+      top.appendChild(val);
+      const range = h('input', { type: 'range', min: p.min, max: p.max, step: p.step || 0.01 });
+      range.value = p.value;
+      range.addEventListener('input', () => { Fx.setParam(p.name, parseFloat(range.value)); val.textContent = fmt(parseFloat(range.value)); });
+      wrap.append(top, range);
+      return wrap;
+    }));
+  } else {
+    // keep values fresh without rebuilding (e.g. preset switch reusing same param names)
+    const ranges = el.fxParams.querySelectorAll('input[type=range]');
+    s.params.forEach((p, i) => { if (ranges[i] && document.activeElement !== ranges[i]) ranges[i].value = p.value; });
+  }
+}
+function fmt(v) { return (Math.round(v * 100) / 100).toString(); }
+
+function openFxModal() {
+  el.fxSource.value = Fx.currentSource();
+  el.fxError.textContent = Fx.getState().error || '';
+  el.fxModal.hidden = false;
+}
+
+function initFx() {
+  Fx.registerSurface('terminal', terminalSurfaceEl, getTerminalSource);
+  Fx.registerSurface('rollface', el.face, getRollFaceSource);
+  Fx.onChange(renderFxUI);
+
+  const pickHandler = async (sel) => {
+    if (sel.value === 'off') { Fx.setEnabled(false); return; }
+    const [where, file] = sel.value.split('/');
+    await Fx.selectPreset(where, file);
+    Fx.setEnabled(true);
+  };
+  el.fxPick.addEventListener('change', () => pickHandler(el.fxPick));
+  el.fxPreset.addEventListener('change', () => pickHandler(el.fxPreset));
+  el.fxEdit.addEventListener('click', openFxModal);
+  el.fxClose.addEventListener('click', () => { el.fxModal.hidden = true; });
+  el.fxModal.addEventListener('click', (e) => { if (e.target === el.fxModal) el.fxModal.hidden = true; });
+  el.fxEnabled.addEventListener('change', () => Fx.setEnabled(el.fxEnabled.checked));
+  el.fxSurfTerminal.addEventListener('change', () => Fx.setSurface('terminal', el.fxSurfTerminal.checked));
+  el.fxSurfRollface.addEventListener('change', () => Fx.setSurface('rollface', el.fxSurfRollface.checked));
+  el.fxApply.addEventListener('click', () => {
+    const r = Fx.applySource(el.fxSource.value);
+    el.fxError.textContent = r.ok ? '' : (r.error || 'compile failed');
+    if (r.ok && !Fx.getState().enabled) Fx.setEnabled(true);
+  });
+  el.fxFolder.addEventListener('click', async () => { await window.souljaterm.openShaderDir(); });
+  el.fxReload.addEventListener('click', async () => { await Fx.refreshList(); });
+
+  Fx.init();
+}
+
 (async function init() {
   const info = await window.souljaterm.homeInfo();
   HOME = info.home;
@@ -776,6 +1145,8 @@ document.body.classList.add(window.souljaterm.platform || 'darwin'); // lets CSS
   initVoicePick();
   initVoiceVol();
   initBlipVol();
+  initTaskUI();               // Roll's task manager panel (☰ in her header, or "!" in chat)
+  initFx();                   // RetroArch CRT shader overlay (CRT picker in sidebar foot)
   rollFace.intro(lastRoll);   // absent for a beat → "appear" clip + CRT warp-in → greeting
   await loadSidebar();
   loadOnboarding();           // populate the empty-state setup checklist
