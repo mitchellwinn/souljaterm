@@ -434,13 +434,84 @@ ipcMain.handle('list-dir', (_e, dir) => {
 });
 
 /* ---- auto-update: packaged builds check GitHub Releases on launch ---- */
+// macOS auto-install (Squirrel.Mac) REQUIRES a Developer-ID signature + notarization — it
+// silently refuses an unsigned/ad-hoc update (download succeeds, then nothing installs). So
+// an unsigned mac build runs a MANUAL flow instead: check the GitHub API, download the .dmg
+// with progress, then open it so the native "drag souljaterm → Applications" window appears.
+// Windows (NSIS) and Linux (AppImage) auto-install fine unsigned, so they use electron-updater.
+// >>> FLIP MAC_SIGNED → true once the build is Developer-ID signed + notarized: that switches
+//     mac onto the real download+quitAndInstall path, no other changes needed. <<<
+const https = require('https');
+const MAC_SIGNED = false;
+const MANUAL_MAC = isMac && !MAC_SIGNED;       // unsigned mac → manual DMG flow, no Squirrel
+const RELEASES_API = 'https://api.github.com/repos/mitchellwinn/souljaterm/releases/latest';
+const RELEASES_PAGE = 'https://github.com/mitchellwinn/souljaterm/releases/latest';
 let updateStatus = { state: app.isPackaged ? 'checking' : 'dev' };
+let manualDmg = null;                          // { url, version } for the unsigned-mac flow
 function sendUpdate(s) {
   updateStatus = s;
   if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('update-status', s);
 }
+// Compare dotted versions: is a strictly newer than b? (e.g. '0.1.3' > '0.1.2')
+function semverGt(a, b) {
+  const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+  for (let i = 0; i < 3; i++) { const x = pa[i] || 0, y = pb[i] || 0; if (x !== y) return x > y; }
+  return false;
+}
+// GET a URL as JSON, following one level of redirect (GitHub API is direct, no redirect).
+function getJson(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, { headers: { 'User-Agent': 'souljaterm', Accept: 'application/vnd.github+json' } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume(); return getJson(res.headers.location).then(resolve, reject);
+      }
+      if (res.statusCode !== 200) { res.resume(); return reject(new Error('HTTP ' + res.statusCode)); }
+      let body = ''; res.on('data', (d) => { body += d; }); res.on('end', () => { try { resolve(JSON.parse(body)); } catch (e) { reject(e); } });
+    }).on('error', reject);
+  });
+}
+// Stream a file to disk, following redirects (GitHub asset URLs 302 to a CDN), reporting %.
+function downloadFile(url, dest, onProgress) {
+  return new Promise((resolve, reject) => {
+    https.get(url, { headers: { 'User-Agent': 'souljaterm' } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume(); return downloadFile(res.headers.location, dest, onProgress).then(resolve, reject);
+      }
+      if (res.statusCode !== 200) { res.resume(); return reject(new Error('HTTP ' + res.statusCode)); }
+      const total = parseInt(res.headers['content-length'] || '0', 10);
+      let got = 0, last = -1;
+      const file = fs.createWriteStream(dest);
+      res.on('data', (d) => { got += d.length; if (total) { const p = Math.round((got / total) * 100); if (p !== last) { last = p; onProgress(p); } } });
+      res.pipe(file);
+      file.on('finish', () => file.close((err) => (err ? reject(err) : resolve())));
+      file.on('error', (e) => { fs.unlink(dest, () => {}); reject(e); });
+    }).on('error', reject);
+  });
+}
+// Unsigned-mac update check: hit the GitHub API, and if a newer release ships a .dmg, offer it.
+async function initManualUpdate() {
+  try {
+    const rel = await getJson(RELEASES_API);
+    const version = String(rel.tag_name || '').replace(/^v/, '');
+    if (!version || !semverGt(version, app.getVersion())) return sendUpdate({ state: 'none' });
+    const dmg = (rel.assets || []).find((a) => /\.dmg$/i.test(a.name || ''));
+    if (!dmg) return sendUpdate({ state: 'none' });   // no DMG asset to hand them → offer nothing
+    manualDmg = { url: dmg.browser_download_url, version };
+    sendUpdate({ state: 'available', version, manual: true });
+  } catch (_) { sendUpdate({ state: 'none' }); }
+}
+// Download the DMG to ~/Downloads, then open it so Finder shows the drag-to-Applications window.
+function downloadDmgAndOpen() {
+  if (!manualDmg) { shell.openExternal(RELEASES_PAGE); return; }   // safety net: just open releases
+  const dest = path.join(app.getPath('downloads'), path.basename(manualDmg.url.split('?')[0]));
+  sendUpdate({ state: 'downloading', percent: 0, manual: true });
+  downloadFile(manualDmg.url, dest, (pct) => sendUpdate({ state: 'downloading', percent: pct, manual: true }))
+    .then(() => { sendUpdate({ state: 'manual-ready', version: manualDmg.version }); shell.openPath(dest); })
+    .catch(() => { sendUpdate({ state: 'none' }); shell.openExternal(RELEASES_PAGE); }); // fall back to the page
+}
 function initAutoUpdate() {
   if (!app.isPackaged) return;                  // electron-updater only works in packaged apps
+  if (MANUAL_MAC) return initManualUpdate();    // unsigned mac → self-contained DMG flow
   autoUpdater.autoDownload = false;             // hold the download until the user hits the button
   autoUpdater.on('update-available', (i) => sendUpdate({ state: 'available', version: i.version }));
   autoUpdater.on('update-not-available', () => sendUpdate({ state: 'none' }));
@@ -450,7 +521,10 @@ function initAutoUpdate() {
   autoUpdater.checkForUpdates().catch(() => sendUpdate({ state: 'none' }));
 }
 ipcMain.handle('update-status-get', () => updateStatus);
-ipcMain.on('update-download', () => { try { autoUpdater.downloadUpdate(); } catch (_) {} });
+ipcMain.on('update-download', () => {
+  if (MANUAL_MAC) { downloadDmgAndOpen(); return; }       // unsigned mac: fetch DMG + open it
+  try { autoUpdater.downloadUpdate(); } catch (_) {}
+});
 ipcMain.on('update-install', () => { try { autoUpdater.quitAndInstall(); } catch (_) {} });
 
 function createWindow() {

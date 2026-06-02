@@ -46,20 +46,20 @@
 
     _frame(f) { this.img.src = `${this.base}roll/frames/${f}.png`; }
 
-    // Resolve which output device Roll should sing through. Default: prefer a virtual
-    // device (BlackHole) so OBS can capture her voice off that DEVICE — ScreenCaptureKit
-    // app-audio capture can't see Electron's renderer audio, but a device tap can.
-    // Override via localStorage 'rollSink':
-    //   'default' → system default output (no routing)
-    //   <substr>  → first audiooutput whose label contains <substr> (case-insensitive)
-    // The chosen deviceId is cached in 'rollSinkId'; the mic unlock used to read device
-    // labels happens AT MOST ONCE EVER (gated by 'rollMicTried' across launches + a shared
-    // in-flight promise across windows) so macOS never stacks repeat prompts.
+    // Resolve which output device Roll should sing through. Default: system output only,
+    // no routing — we must NEVER ask for the microphone just to read device labels, since
+    // that triggers a native macOS prompt for every user. OBS users opt in explicitly by
+    // setting localStorage 'rollSink' to a device-label substring (e.g. 'blackhole'); only
+    // then do we do the one-time mic unlock to reveal labels and tap that DEVICE for OBS.
+    //   unset / '' / 'default' → system default output (no routing, no mic prompt)
+    //   <substr>               → first audiooutput whose label contains <substr> (case-insensitive)
+    // The chosen deviceId is cached in 'rollSinkId'; the mic unlock happens AT MOST ONCE EVER
+    // (gated by 'rollMicTried' across launches + a shared in-flight promise across windows).
     async _resolveSinkId() {
       let pref = null;
       try { pref = localStorage.getItem('rollSink'); } catch (_) {}
-      if (pref === 'default') return null;
-      const match = (pref && pref.trim()) ? pref.trim().toLowerCase() : 'blackhole';
+      if (!pref || !pref.trim() || pref === 'default') return null; // opt-in only — no mic by default
+      const match = pref.trim().toLowerCase();
       try { const c = localStorage.getItem('rollSinkId'); if (c) return c; } catch (_) {}
       const md = navigator.mediaDevices;
       if (!md || !md.enumerateDevices) return null;

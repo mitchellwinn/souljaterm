@@ -1,6 +1,6 @@
 {
   "name": "souljaterm",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "A custom terminal for vibing in Claude Code",
   "author": {
     "name": "mitchellwinn",
@@ -23,6 +23,7 @@
   "build": {
     "appId": "com.souljaterm.app",
     "productName": "souljaterm",
+    "afterPack": "build/afterPack.js",
     "publish": [
       {
         "provider": "github",

@@ -206,13 +206,16 @@ function closeTab(tab) {
 
 /* ---- per-tab state badge (left of ×) + chiptune alert ----
    idle      → nothing
-   thinking  → ⚠️  Claude is working in that session
+   thinking  → nothing — "working" is tracked internally but shows NO badge. A persistent
+               busy icon flickered (watchdog cleared it, a late tool event re-lit it), and a
+               steady indicator isn't worth that: the only thing worth a glance is when a tab
+               actually needs you, which the two states below cover.
    done      → ❗  finished its turn while you were elsewhere (flashes + chirps)
    question  → ❓  waiting on you to answer/permit something (flashes + chirps)
-   The badge shows on any tab; the flash + sound only fire when it's NOT the active tab. */
+   A badge only ever appears on a tab you're NOT looking at; ❗/❓ flash + chirp too. */
 const TAB_STATUS = {
   idle:     { icon: '',     flash: false },
-  thinking: { icon: '⚠️',  flash: false },
+  thinking: { icon: '',     flash: false },  // working = no badge (see note above)
   done:     { icon: '❗',  flash: true, sfx: 'done' },
   question: { icon: '❓',  flash: true, sfx: 'question' },
 };
@@ -230,27 +233,23 @@ function setTabStatus(tab, name) {
 function markThinking(tab) {
   if (tab && (tab.status === 'idle' || tab.status === 'thinking')) {
     const now = Date.now();
-    tab.thinkingAt = now;               // any sign of life (hooks OR pty) feeds this
-    tab.claudeAt = now;                 // real Claude hook only — the ceiling watches this
+    tab.thinkingAt = now;               // any sign of life (hooks OR pty) feeds the watchdog
     setTabStatus(tab, 'thinking');
   }
 }
-// Watchdog: a working tab emits hooks + terminal output constantly. If a ⚠️ tab goes
-// totally silent (no hooks, no pty data) for this long, the turn ended without a Stop
-// hook (interrupt, crash, dropped event) — drop the stale badge. A real long-running
-// tool re-lights it on its next event, so a false clear self-heals.
+// Watchdog: a working tab emits hooks + terminal output constantly. We clear ⚠️ only when
+// the tab goes genuinely SILENT — no hooks AND no pty data — for this long, which means the
+// turn ended without a Stop hook (interrupt, crash, dropped event). We deliberately do NOT
+// clear a tab that's still actively streaming output just because the last *Claude hook* was
+// a while ago: a single long-running tool (a big build/test) emits no intermediate hooks but
+// pipes to the pty the whole time. Dropping its ⚠️ mid-turn made the badge flicker off, then
+// snap back to ❗ at completion. A finished turn goes quiet → this still catches it in 90s.
 const THINKING_IDLE_MS = 90000;        // dead silent (no hooks AND no pty) → drop the badge
-const THINKING_MAX_MS = 5 * 60000;     // hard ceiling since the last REAL Claude hook. Raw shell
-                                       // output (dev servers, tail -f, spinners) feeds thinkingAt but
-                                       // NOT claudeAt, so it can no longer pin a ⚠️ forever. A genuine
-                                       // long tool re-lights on its next hook, so an early clear self-heals.
 setInterval(() => {
   const now = Date.now();
   for (const t of tabs) {
     if (t.status !== 'thinking') continue;
-    const silent = !t.thinkingAt || now - t.thinkingAt > THINKING_IDLE_MS;
-    const stale  = !t.claudeAt   || now - t.claudeAt   > THINKING_MAX_MS;
-    if (silent || stale) setTabStatus(t, 'idle');
+    if (!t.thinkingAt || now - t.thinkingAt > THINKING_IDLE_MS) setTabStatus(t, 'idle');
   }
 }, 5000);
 function clearAttention(tab) {
@@ -452,7 +451,7 @@ function narrateClaude(evt) {
   const tabObj = tabs.find((t) => t.id === evt.tab);
   if (h.transcript_path) window.souljaterm.watchTranscript(h.transcript_path, evt.tab); // live thinking
   if (name === 'UserPromptSubmit') {
-    if (tabObj) { tabObj.thinkingAt = Date.now(); tabObj.claudeAt = Date.now(); }
+    if (tabObj) tabObj.thinkingAt = Date.now();
     setTabStatus(tabObj, 'thinking');         // user just acted → working, clears any stale flag
     const p = clip(h.prompt, 80);
     window.souljaterm.rollLog('prompt', proj, p);
@@ -604,15 +603,19 @@ let updateState = { state: 'none' };
 function updateCard() {
   const s = updateState || {};
   if (s.state === 'available') {
-    const btn = h('button', { class: 'btn big ob-update' }, `⤓ Update to v${s.version} & restart`);
+    // Unsigned mac (s.manual) can't self-install — it downloads the DMG and opens it for a drag.
+    const btn = h('button', { class: 'btn big ob-update' },
+      s.manual ? `⤓ Download v${s.version} & update` : `⤓ Update to v${s.version} & restart`);
     btn.addEventListener('click', () => {
       window.souljaterm.updateDownload();
-      updateState = { state: 'downloading', percent: 0 };
+      updateState = { state: 'downloading', percent: 0, manual: s.manual };
       loadOnboarding();
     });
     return h('div', { class: 'ob-banner' }, h('div', { class: 'ob-bantxt' }, 'A new souljaterm is available!'), btn);
   }
   if (s.state === 'downloading') return h('div', { class: 'ob-banner' }, h('div', { class: 'ob-bantxt' }, `Downloading update… ${s.percent || 0}%`));
+  // Manual mac: DMG downloaded + opened — tell them the last step (Squirrel can't do it for us).
+  if (s.state === 'manual-ready') return h('div', { class: 'ob-banner' }, h('div', { class: 'ob-bantxt' }, 'Downloaded — drag souljaterm into Applications, then reopen to finish. ✨'));
   if (s.state === 'ready') return h('div', { class: 'ob-banner' }, h('div', { class: 'ob-bantxt' }, 'Update ready — restarting…'));
   return null;
 }
@@ -626,7 +629,14 @@ function initUpdates() {
     loadOnboarding();
   });
   if (window.souljaterm.updateStatusGet)
-    window.souljaterm.updateStatusGet().then((s) => { if (s) { updateState = s; loadOnboarding(); } }).catch(() => {});
+    window.souljaterm.updateStatusGet().then((s) => {
+      if (!s) return;
+      updateState = s;
+      // A 'ready' that landed before our listener attached would otherwise stick on
+      // "restarting…" forever — catch it here so the install still fires.
+      if (s.state === 'ready') { window.souljaterm.updateInstall(); return; }
+      loadOnboarding();
+    }).catch(() => {});
 }
 async function loadOnboarding() {
   const host = document.getElementById('onboard');
@@ -653,9 +663,17 @@ async function loadOnboarding() {
   steps.push({ ok: folderOk, title: folderOk ? 'Projects folder set' : 'Pick your projects folder',
     note: prettyName(s.root), actions: [{ label: 'Choose…', run: pickFolderThenReload }] });
 
-  // 3. Go
-  steps.push({ ok: false, mark: '▸', title: 'Open a session', note: 'pick a folder at left, or ⌘T',
-    actions: [{ label: 'New session', run: () => newTab(active ? active.cwd : HOME) }] });
+  // macOS: one-time Full Disk Access. We can't trigger the grant (no API) — only deep-link
+  // to the pane; the user flips it once. Paired with the ad-hoc signature, the grant then
+  // persists across launches, so TCC stops re-prompting every time Claude touches files.
+  if (s.platform === 'darwin') steps.push({ ok: false, mark: '🔓', title: 'Allow Full Disk Access (one-time)',
+    note: 'so macOS stops asking every launch',
+    actions: [{ label: 'Open Settings', run: () => window.souljaterm.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles') }] });
+
+  // 3. Go — plain session, plus a one-click Claude that skips its tool-permission prompts
+  const goActions = [{ label: 'New session', run: () => newTab(active ? active.cwd : HOME) }];
+  if (s.claude) goActions.push({ label: 'Claude (skip perms)', run: () => runInNewTab('claude --dangerously-skip-permissions') });
+  steps.push({ ok: false, mark: '▸', title: 'Open a session', note: 'pick a folder at left, or ⌘T', actions: goActions });
 
   const recheck = h('button', { class: 'btn ob-recheck' }, '↻ re-check');
   recheck.addEventListener('click', loadOnboarding);
