@@ -180,14 +180,20 @@ body.darwin #app.sidebar-collapsed #tabbar { padding-left: 76px; }
 .ob-update { align-self: flex-start; }
 
 /* ---- assistant (Roll) ---- */
-#assistant { width: 168px; flex: 0 0 168px; display: flex; flex-direction: column; }
+/* min-height:0 on the column AND its body: each is a flex item that is itself a
+   flex container, and without it their automatic minimum is content-height — so a
+   long message grows the box instead of staying bounded. With it, the height is
+   fixed by the window and #msg (overflow-y:auto) scrolls old text off the top. */
+#assistant { width: 168px; flex: 0 0 168px; display: flex; flex-direction: column; min-height: 0; }
 #app.assistant-min #assistant { display: none; }       /* minimized  */
-#assistant-body { flex: 1; display: flex; flex-direction: column; padding: 6px; gap: 6px; }
+#assistant-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 6px; gap: 6px; }
 
 .lcd { background: var(--screen); color: var(--lcd); margin: 0;
   border: 2px solid; border-color: var(--dark) var(--light) var(--light) var(--dark); }
 /* face box is square to match the 32x32 portrait; textbox takes the rest */
-#face { flex: 0 0 auto; aspect-ratio: 1 / 1; width: 100%; padding: 0; position: relative;
+/* flex:0 1 auto (not 0 0): on a short window the face yields height so the text box
+   and input stay on screen; the portrait stays square via object-fit:contain. */
+#face { flex: 0 1 auto; aspect-ratio: 1 / 1; width: 100%; min-height: 60px; padding: 0; position: relative;
   display: flex; align-items: center; justify-content: center; overflow: hidden; }
 #face img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated;
   -webkit-user-drag: none; user-select: none; pointer-events: none; }
@@ -212,8 +218,20 @@ body.darwin #app.sidebar-collapsed #tabbar { padding-left: 76px; }
   color: var(--lcd); font: 11px var(--mono-font); text-align: center; white-space: pre-line; opacity: .85; }
 /* min-height:0 lets the flex child shrink below its content height so its own
    overflow-y scroll engages, instead of growing the box and the window. */
-#msg { flex: 1; min-height: 0; overflow-y: auto; padding: 9px; font: 12px var(--mono-font);
+#msg { flex: 1; min-height: 0; overflow-y: scroll; padding: 9px; font: 12px var(--mono-font);
   line-height: 1.5; color: var(--lcd); white-space: pre-wrap; word-break: break-word; }
+/* Styled 90s scrollbar (like the terminal, slimmer + no arrow buttons for the narrow panel).
+   An explicit width kills the macOS overlay bar that rendered over the inset border and looked
+   cut off; overflow-y:scroll reserves the gutter so text wraps clear of it instead of under it. */
+#msg::-webkit-scrollbar { width: 11px; }
+#msg::-webkit-scrollbar-track {
+  background: repeating-conic-gradient(var(--chrome) 0 25%, var(--chrome-deep) 0 50%) 0 0 / 2px 2px;
+  border-left: 1px solid var(--dark); }
+#msg::-webkit-scrollbar-thumb {
+  background: var(--chrome);
+  border: 2px solid; border-color: var(--light) var(--dark) var(--dark) var(--light);
+  min-height: 24px; }
+#msg::-webkit-scrollbar-thumb:active { border-color: var(--dark) var(--light) var(--light) var(--dark); }
 /* "Roll is thinking..." status: pulsing yellow→orange, centered, while her brain works */
 #msg.thinking { color: #ffb02e; text-align: center; animation: rollThinking 1.1s ease-in-out infinite; }
 @keyframes rollThinking { 0%, 100% { color: #ffd24a; } 50% { color: #ff6f1a; } }

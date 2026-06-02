@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    body { margin: 0; padding: 18px 20px; min-height: 100vh;
+      background: radial-gradient(130% 100% at 50% 0%, #5fc4ab, #2f9e86 75%), #2f9e86;
+      display: flex; flex-direction: column; gap: 16px; align-items: flex-start; }
+    #tabbar { width: 720px; max-width: 100%; }
+    /* render the normally-fixed panel as a static block so it captures in full */
+    #tasks-panel.preview { position: static; height: auto; width: 420px; box-shadow: 0 8px 22px rgba(0,0,0,.4); }
+    .cap { color: #0e3b31; font: 11px var(--mono-font); }
+  </style>
+</head>
+<body>
+  <div class="cap">▸ tabs auto-rename as Claude works — "dir: what's happening"</div>
+  <div id="tabbar">
+    <button id="sidebar-show" class="btn">›</button>
+    <div id="tab-list">
+      <div class="tab" style="--tab-bg:hsl(150 42% 40%);--tab-bg-active:hsl(150 58% 52%);--tab-fg:hsl(150 30% 96%)">
+        <span class="label">perapera: karaoke research</span><span class="status">◐</span><span class="close">×</span>
+      </div>
+      <div class="tab" style="--tab-bg:hsl(210 42% 40%);--tab-bg-active:hsl(210 58% 52%);--tab-fg:hsl(210 30% 96%)">
+        <span class="label">api: stripe webhooks</span><span class="status">❓</span><span class="close">×</span>
+      </div>
+      <div class="tab active" style="--tab-bg:hsl(280 42% 40%);--tab-bg-active:hsl(280 58% 52%);--tab-fg:hsl(280 30% 96%)">
+        <span class="label">souljaterm: wiring the task manager</span><span class="status"></span><span class="close">×</span>
+      </div>
+    </div>
+    <button id="new-tab" class="btn">＋</button>
+  </div>
+
+  <div class="cap">▸ Roll's task manager (☰ in her header, or "!" in her chat)</div>
+  <section id="tasks-panel" class="panel-raised preview">
+    <div class="tasks-head bevel-title">
+      <span class="tasks-title">ROLL · TASKS</span>
+      <button id="tasks-close" class="btn">×</button>
+    </div>
+    <div class="tasks-scroll">
+      <div class="tasks-hud-wrap">
+        <div class="tasks-section-label">SESSIONS</div>
+        <div id="tasks-hud" class="tasks-hud">
+          <div class="hud-row"><span class="hud-dot" style="background:hsl(150 60% 50%)"></span><span class="hud-name">perapera: karaoke research</span><span class="hud-state s-thinking">◐</span></div>
+          <div class="hud-row"><span class="hud-dot" style="background:hsl(210 60% 50%)"></span><span class="hud-name">api: stripe webhooks</span><span class="hud-state s-question">❓</span></div>
+          <div class="hud-row active"><span class="hud-dot" style="background:hsl(280 60% 50%)"></span><span class="hud-name">souljaterm: wiring the task manager</span><span class="hud-state s-idle">○</span></div>
+        </div>
+      </div>
+
+      <form class="task-form">
+        <textarea id="task-prompt" rows="2" placeholder="Tell Roll what to do… (or type ! in her chat box)"></textarea>
+        <div class="task-controls">
+          <select id="task-dir" class="btn"><option>perapera</option></select>
+          <select id="task-model" class="btn"><option>Auto (Roll picks)</option></select>
+          <label class="task-plan"><input type="checkbox" checked /> let Roll plan first</label>
+          <button id="task-run" class="btn" type="button">Run ▸</button>
+        </div>
+        <div id="task-skills" class="task-skills">
+          <button class="btn skill-btn" type="button">Git digest</button>
+          <button class="btn skill-btn" type="button">Summarize session</button>
+          <button class="btn skill-btn" type="button">Organize folder</button>
+          <button class="btn skill-btn" type="button">Clean junk</button>
+        </div>
+      </form>
+
+      <div class="tasks-section-label">TASKS</div>
+      <div id="task-list" class="task-list">
+
+        <div class="task-card">
+          <div class="task-card-head">
+            <span class="task-model m-sonnet">SONNET</span>
+            <span class="task-prompt">organize my downloads into folders by type</span>
+            <span class="task-status st-running">running…</span>
+          </div>
+          <div class="task-log">
+            <div class="log-line log-tool">▸ Bash: ls -la ~/Downloads</div>
+            <div class="log-line log-text">37 loose files — bucketing into Images, Docs, Archives, Code…</div>
+            <div class="log-line log-tool">▸ Bash: mkdir -p Images Documents Archives</div>
+            <div class="log-line log-tool">▸ Bash: mv *.png *.jpg Images/</div>
+          </div>
+          <div class="task-actions"><button class="btn">✕ Cancel</button></div>
+        </div>
+
+        <div class="task-card">
+          <div class="task-card-head">
+            <span class="task-model m-opus">OPUS</span>
+            <span class="task-prompt">refactor the auth module to use the new session store</span>
+            <span class="task-status st-planned">plan ready — review it</span>
+          </div>
+          <div class="task-log">
+            <div class="log-line log-text">Plan: 1) extract token logic into session-store.js 2) swap 4 call sites 3) add a migration shim 4) run the auth tests. No deletes.</div>
+          </div>
+          <div class="task-actions"><button class="btn">✓ Approve &amp; run</button></div>
+        </div>
+
+        <div class="task-card">
+          <div class="task-card-head">
+            <span class="task-model m-haiku">HAIKU</span>
+            <span class="task-prompt">git digest</span>
+            <span class="task-status st-done">done</span>
+          </div>
+          <div class="task-log">
+            <div class="log-line log-result">3 commits since yesterday: voice rework, mobile fixes, and the v0.1.6 signing patch. 2 files still uncommitted.</div>
+          </div>
+          <div class="task-actions">
+            <form class="task-followup"><input type="text" placeholder="ask Roll to keep going…" /></form>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+</body>
+</html>
