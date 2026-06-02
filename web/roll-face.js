@@ -125,17 +125,27 @@
       }
     }
 
-    // Emit one animalese "boop" at `freq` into a single AudioContext. Sine that glides down a touch
-    // per letter, consonants wobble (vibrato), and a subtle square wave an octave down adds body.
+    // Animalese blip peak gain. User-adjustable via localStorage 'rollBlipVol' (0..1) so it can be
+    // balanced against the recorded clips; default 0.55 maps to the original ~0.038 peak.
+    _blipVol() {
+      let v = 0.55;
+      try { const s = localStorage.getItem('rollBlipVol'); if (s != null && s !== '') v = parseFloat(s); } catch (_) {}
+      return isNaN(v) ? 0.55 : Math.max(0, Math.min(1, v));
+    }
+
+    // Emit one animalese "boop" at `freq` into a single AudioContext. A sine that glides down a
+    // touch per letter (bubbly), consonants get a quick vibrato wobble for "speechy" texture, and
+    // a subtle square wave an octave down adds retro low-end body. (Preview voice #6 + sub-bass.)
     _tone(ctx, freq, isCons) {
       if (ctx.state === 'suspended') ctx.resume();
       const t = ctx.currentTime;
       // soft lowpass for a rounded, non-buzzy tone
       const lp = ctx.createBiquadFilter();
       lp.type = 'lowpass'; lp.frequency.value = 1900; lp.Q.value = 0.5;
+      const peak = Math.max(0.0002, 0.07 * this._blipVol());
       const g = ctx.createGain();
       g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(0.038, t + 0.015); // gentle attack
+      g.gain.exponentialRampToValueAtTime(peak, t + 0.015); // gentle attack
       g.gain.exponentialRampToValueAtTime(0.0001, t + 0.1); // soft tail
       lp.connect(g).connect(ctx.destination);
       // main sine "boop" — glides down slightly across the note
@@ -187,7 +197,9 @@
           let buf = bufs.get(ctx);
           if (!buf) { buf = await ctx.decodeAudioData(bytes.slice(0)); bufs.set(ctx, buf); }
           const src = ctx.createBufferSource(); src.buffer = buf;
-          const g = ctx.createGain(); g.gain.value = this._clipVol();
+          // CLIP_SCALE pulls the whole recorded-clip range down so the slider lives at a usable
+          // position instead of pinned near zero — the raw .wav files are very hot.
+          const g = ctx.createGain(); g.gain.value = this._clipVol() * 0.45;
           src.connect(g).connect(ctx.destination);
           src.start();
         } catch (_) { /* this sink failed — skip it */ }
