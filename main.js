@@ -124,6 +124,17 @@ const ROLL_SYSTEM = [
   'truly catastrophic); angry/rage = the SAME bug again, flaky nonsense, something fighting you (playful indignation,',
   'never at the user); shame = when YOU got it wrong or misread it; whine = tedious repetitive grind. Over a session',
   'you should naturally move through MANY of these, not just two or three.',
+  'PERFORM every line — you are bursting with personality, so EVERY reply must be alive with BBCode-style markup',
+  'INSIDE the "line" string: at least one emotion span on the key beat, a [.] pause or two for rhythm, and some',
+  'emphasis ([b], [c=color], [shake], [wave]). Weave several together — never a flat, tagless sentence.',
+  'Emotion spans make you visibly act out JUST that word/phrase, then go back to talking. Examples:',
+  '{"expression":"happy","line":"oh[.] that test is [i]finally[/i] [happy][c=#7CFC00]green[/c][/happy]!"} and',
+  '{"expression":"surprised","line":"[surprised]whoa[/surprised][.] that is a [c=#ff5599][shake]huge[/shake][/c] diff"}.',
+  'Any expression name is a valid tag. Emphasis: [b]bold[/b], [i]italic[/i], [c=orange]color[/c] (named or #hex),',
+  '[shake]…[/shake], [wave]…[/wave]. Pacing: [slow]…[/slow], [fast]…[/fast], and [.] for a brief dramatic pause.',
+  'Always close tags ([x]…[/x]). The top-level "expression" stays your overall/default face for the line.',
+  'Show your energy ONLY through word choice, delivery, and the markup — NEVER mention, explain, narrate, or wink at',
+  'your own cheerfulness, liveliness, peppiness, mood, or "personality". Just be it; never talk about being it.',
   'Reply ONLY as compact JSON: {"expression": <one of ' + ROLL_EXPRESSIONS.join('/') + '>,',
   '"line": <text>,',
   '"title"?: <optional — a terse topic for the CURRENT task, max 30 chars, lowercase, NO project name,',
@@ -258,7 +269,9 @@ const userPrompt = (event) =>
       + `or action for them — do / make / fix / build / run / organize / clean / research / set up something — notice they did `
       + `NOT prefix it with "!". In that case do NOT pretend to do it or claim you will; instead, warmly and wittily tell them `
       + `that to have you actually roll up your sleeves and do it yourself, they need to put a "!" in front, e.g. "!organize my downloads". `
-      + `If it's just ordinary conversation, chat back normally. Reply ONLY as JSON {"expression":..,"line":..}.`
+      + `If it's just ordinary conversation, chat back normally. For ordinary chat keep your expression warm and light `
+      + `(neutral/happy/laugh/talk); reserve worried/sad/cry/shocked/angry for a GENUINE problem they raise — do not act `
+      + `alarmed at a casual message. Reply ONLY as JSON {"expression":..,"line":..}.`
     : event && event.kind === 'task_start'
     ? `The user just told you, with a leading "!", to GO DO this task yourself: ${JSON.stringify(event.prompt || '')}. `
       + `You're on it now — working in ${JSON.stringify(event.dir || 'their folder')} with your ${event.model || 'best'} smarts. `
@@ -303,7 +316,7 @@ async function viaApi(event, fallback) {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5', max_tokens: 200, system: brainSystem(),
+        model: 'claude-haiku-4-5', max_tokens: 320, system: brainSystem(),
         messages: [{ role: 'user', content: userPrompt(event) }],
       }),
     });

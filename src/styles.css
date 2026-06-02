@@ -187,10 +187,14 @@ body.darwin #app.sidebar-collapsed #tabbar { padding-left: 76px; }
 .lcd { background: var(--screen); color: var(--lcd); margin: 0;
   border: 2px solid; border-color: var(--dark) var(--light) var(--light) var(--dark); }
 /* face box is square to match the 32x32 portrait; textbox takes the rest */
-#face { flex: 0 0 auto; aspect-ratio: 1 / 1; width: 100%; padding: 0;
+#face { flex: 0 0 auto; aspect-ratio: 1 / 1; width: 100%; padding: 0; position: relative;
   display: flex; align-items: center; justify-content: center; overflow: hidden; }
 #face img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated;
   -webkit-user-drag: none; user-select: none; pointer-events: none; }
+/* Eyes layer: stacked over the mouth/base img and clipped to the top 20px (of 32 = 62.5%) so a
+   blink swaps ONLY the eyes — mouth animation underneath is untouched. Hidden unless blinking. */
+#face .eyes { position: absolute; inset: 0; z-index: 1; display: none;
+  clip-path: inset(0 0 37.5% 0); }
 /* boot warp-in: she's hidden (.warp-pending), then powers on like a CRT/teleport (.warp-in).
    #face clips overflow, so the brief horizontal stretch doesn't spill out of her box. */
 #face.warp-pending img { opacity: 0; }
@@ -210,6 +214,15 @@ body.darwin #app.sidebar-collapsed #tabbar { padding-left: 76px; }
    overflow-y scroll engages, instead of growing the box and the window. */
 #msg { flex: 1; min-height: 0; overflow-y: auto; padding: 9px; font: 12px var(--mono-font);
   line-height: 1.5; color: var(--lcd); white-space: pre-wrap; word-break: break-word; }
+/* "Roll is thinking..." status: pulsing yellow→orange, centered, while her brain works */
+#msg.thinking { color: #ffb02e; text-align: center; animation: rollThinking 1.1s ease-in-out infinite; }
+@keyframes rollThinking { 0%, 100% { color: #ffd24a; } 50% { color: #ff6f1a; } }
+/* BBCode animated-text effects on tagged words ([shake]/[wave]) */
+#msg .fx-shake { display: inline-block; animation: fxShake .26s steps(2) infinite; }
+@keyframes fxShake { 0% { transform: translate(0,0); } 25% { transform: translate(.6px,-.6px); }
+  50% { transform: translate(-.6px,.5px); } 75% { transform: translate(.5px,.6px); } 100% { transform: translate(0,0); } }
+#msg .fx-wave { display: inline-block; animation: fxWave 1s ease-in-out infinite; }
+@keyframes fxWave { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
 #chat-form { flex: 0 0 auto; display: flex; }
 #chat-input {
   flex: 1; min-width: 0; font: 12px var(--mono-font); color: var(--lcd);

@@ -4,6 +4,55 @@
 (function () {
   const ANIM = window.ROLL_ANIM;
   const NAMES = window.ROLL_EXPRESSIONS;
+  const BLINK = window.ROLL_BLINK || { eyes: [] };
+  const MOUTH = window.ROLL_MOUTH || { closed: 'talk_blink1', mid: 'talk_blink2', open: 'talk_blink3' };
+  const IDLE_FRAME = (ANIM.idle && ANIM.idle.frames[0]) || 'talk_blink1';
+  // Only genuinely big emotions play a full face animation (and skip lip-sync). Everything else —
+  // happy, neutral, worried, sad, etc. — just uses the talking pipeline so she looks like she's
+  // actually speaking the words, then settles to rest.
+  const STRONG_EMOTION = { laugh: 1, cry: 1, shocked: 1, surprised: 1, angry: 1, rage: 1 };
+
+  // Parse Roll's BBCode-ish markup into one attribute object per visible character. Tags:
+  //   emotion: [happy]…[/happy] (any expression name) → emote that face DURING the span, lip-sync
+  //            outside it. style: [b] [i] [c=orange] [shake] [wave]. pacing: [slow]/[fast] spans,
+  //            [.] or [p] = a held pause before the next character. Unknown tags are ignored.
+  // The result is index-aligned with the plain text, so word-wrap (which only swaps a space for a
+  // newline) keeps the attributes lined up with the rendered characters.
+  function parseMarkup(text) {
+    const chars = [];
+    const stack = [];
+    let pause = 0;
+    const attrFor = () => {
+      const a = { emote: null, b: false, i: false, color: null, shake: false, wave: false, speed: 1 };
+      for (const t of stack) {
+        if (NAMES.includes(t.name)) a.emote = t.name;
+        else if (t.name === 'b') a.b = true;
+        else if (t.name === 'i') a.i = true;
+        else if (t.name === 'c') a.color = t.val || a.color;
+        else if (t.name === 'shake') a.shake = true;
+        else if (t.name === 'wave') a.wave = true;
+        else if (t.name === 'slow') a.speed = 0.5;
+        else if (t.name === 'fast') a.speed = 2;
+      }
+      return a;
+    };
+    const emit = (s) => {
+      for (const ch of s) { const a = attrFor(); a.ch = ch; a.pause = pause; pause = 0; chars.push(a); }
+    };
+    const re = /\[(\/?)([a-z.]+)(?:=([^\]]+))?\]/gi;
+    let last = 0, m;
+    while ((m = re.exec(text))) {
+      emit(text.slice(last, m.index));
+      last = re.lastIndex;
+      const name = m[2].toLowerCase();
+      if (name === '.' || name === 'p' || name === 'pause') { pause += 350; continue; }
+      if (m[1] === '/') { for (let k = stack.length - 1; k >= 0; k--) if (stack[k].name === name) { stack.splice(k, 1); break; } }
+      else stack.push({ name, val: m[3] });
+    }
+    emit(text.slice(last));
+    return chars;
+  }
+  const stripMarkup = (text) => parseMarkup(String(text)).map((c) => c.ch).join('');
 
   // Roll's downloaded voice clips: name → file under assets/roll/voice. Chosen by MEANING
   // (pickClip, in the renderer), the same way an expression is chosen, and played as she starts
@@ -29,11 +78,18 @@
       this.faceEl = faceEl;
       this.msgEl = msgEl;
       this.base = (opts && opts.base) || '../assets/'; // app: src/ → ../assets; the landing page overrides
+      // Two stacked layers: mouth/base (this.img) + eyes overlay (this.eyes, clipped to the top
+      // 20px in CSS) so blinking and the mouth animate independently.
       this.img = document.createElement('img');
       this.img.alt = 'Roll';
-      this.faceEl.replaceChildren(this.img);
+      this.eyes = document.createElement('img');
+      this.eyes.className = 'eyes';
+      this.eyes.alt = '';
+      this.eyes.setAttribute('aria-hidden', 'true');
+      this.faceEl.replaceChildren(this.img, this.eyes);
       this.talking = false;
       this.animTimer = null;
+      this.blinkAnim = null;
       this.typeTimer = null;
       this.settleTimer = null;
       this.queue = [];                       // lines waiting their turn (never interrupts the current one)
@@ -45,6 +101,7 @@
     }
 
     _frame(f) { this.img.src = `${this.base}roll/frames/${f}.png`; }
+    _eyeFrame(f) { this.eyes.src = `${this.base}roll/frames/${f}.png`; }
 
     // Resolve which output device Roll should sing through. Default: system output only,
     // no routing — we must NEVER ask for the microphone just to read device labels, since
@@ -220,7 +277,17 @@
     }
 
     play(name) {
-      const a = ANIM[name] || ANIM.neutral;
+      // mode drives blinking: 'idle' (rest/neutral) and 'talk' (neutral mouth) blink on a timer;
+      // emotional expressions ('expr') have their own faces (and own eyes) so the overlay is off.
+      this._mode = name === 'talk' ? 'talk' : (name === 'idle' || name === 'neutral') ? 'idle' : 'expr';
+      this._runAnim(ANIM[name] || ANIM.neutral);
+      if (this._mode === 'expr') { clearTimeout(this.blinkTimer); this.blinkTimer = null; this._endBlink(); }
+      else this._scheduleBlink();
+    }
+
+    // Drive a single ANIM entry (loop/pingpong/once/hold). No blink/scheduler side effects, so the
+    // blink overlay can pause and resume the base animation through it.
+    _runAnim(a) {
       if (this.animTimer) { clearInterval(this.animTimer); this.animTimer = null; }
       let seq = a.frames.slice();
       if (a.mode === 'pingpong' && seq.length > 2) seq = seq.concat(a.frames.slice(1, -1).reverse());
@@ -238,8 +305,78 @@
       }, 1000 / (a.fps || 4));
     }
 
+    // --- blinking -------------------------------------------------------------
+    // A randomized heartbeat: every ~2.4–6.5s, blink once (and ~1-in-5 times, twice fast). Only
+    // fires while she's at rest or doing the neutral talk; any state change reschedules it.
+    _scheduleBlink() {
+      clearTimeout(this.blinkTimer);
+      this.blinkTimer = setTimeout(() => this._doBlink(), 2400 + Math.random() * 4100);
+    }
+    _doBlink() {
+      if (this._mode !== 'idle' && this._mode !== 'talk') { this._scheduleBlink(); return; }
+      const dbl = Math.random() < 0.2;
+      this._blinkSeq(() => {
+        // double-blink: a brief eyes-open beat (~90ms), then a second blink, reads as the real thing
+        if (dbl) this.dblTimer = setTimeout(() => this._blinkSeq(() => this._scheduleBlink()), 90);
+        else this._scheduleBlink();
+      });
+    }
+    // Fast human blink on the EYES OVERLAY only — the mouth/base layer underneath is untouched, so
+    // it reads the same whether she's idle or mid-sentence. ~3 frames × 35ms ≈ a real blink.
+    _blinkSeq(done) {
+      const seq = BLINK.eyes;
+      if (!this.eyes || !seq || !seq.length) { done(); return; }
+      if (this.blinkAnim) { clearInterval(this.blinkAnim); this.blinkAnim = null; }
+      let i = 0;
+      this.eyes.style.display = 'block';
+      this.blinkAnim = setInterval(() => {
+        if (i >= seq.length) {
+          clearInterval(this.blinkAnim); this.blinkAnim = null;
+          this.eyes.style.display = 'none';   // reveal the base's open eyes again
+          done();
+          return;
+        }
+        this._eyeFrame(seq[i++]);
+      }, 35);
+    }
+    _endBlink() {
+      if (this.blinkAnim) { clearInterval(this.blinkAnim); this.blinkAnim = null; }
+      if (this.dblTimer) { clearTimeout(this.dblTimer); this.dblTimer = null; }
+      if (this.eyes) this.eyes.style.display = 'none';
+    }
+    // One viseme per printed character so the mouth tracks the actual words: space/punctuation
+    // closes it, vowels open wide (a run of vowels just holds open), consonants land mid.
+    _mouthForChar(ch) {
+      if (!ch || !ch.trim() || '.,!?;:…—-'.includes(ch)) { this._frame(MOUTH.closed); return; }
+      this._frame('aeiouyAEIOUY'.includes(ch) ? MOUTH.open : MOUTH.mid);
+    }
+    // Greedy word-wrap to explicit newlines BEFORE typing, so a word never starts on one line and
+    // then jumps to the next when it overflows — it begins on the line where it fits. Measured
+    // against the live message box width in its own font. Over-long single words fall back to the
+    // CSS break (word-break) so they can't run off the edge.
+    _wrap(text) {
+      const el = this.msgEl;
+      const cs = getComputedStyle(el);
+      const maxW = el.clientWidth - parseFloat(cs.paddingLeft || 0) - parseFloat(cs.paddingRight || 0);
+      if (!maxW || maxW <= 0) return text;
+      if (!this._measure) this._measure = document.createElement('canvas').getContext('2d');
+      this._measure.font = `${cs.fontSize} ${cs.fontFamily}`;
+      const width = (s) => this._measure.measureText(s).width;
+      const out = [];
+      for (const para of String(text).split('\n')) {
+        let line = '';
+        for (const word of para.split(' ')) {
+          const trial = line ? line + ' ' + word : word;
+          if (line && width(trial) > maxW) { out.push(line); line = word; }
+          else line = trial;
+        }
+        out.push(line);
+      }
+      return out.join('\n');
+    }
+
     _clear() {
-      if (this.typeTimer) { clearInterval(this.typeTimer); this.typeTimer = null; }
+      if (this.typeTimer) { clearTimeout(this.typeTimer); this.typeTimer = null; }
       if (this.settleTimer) { clearTimeout(this.settleTimer); this.settleTimer = null; }
     }
 
@@ -260,47 +397,113 @@
     show(state) {
       if (!state || !state.line) return;
       this._clear();
+      this._stopThinking();
       this.queue.length = 0;
       this.talking = false;
       if (this.onStart) { try { this.onStart(state); } catch (_) {} }
       const expr = NAMES.includes(state.expression) ? state.expression : 'neutral';
       this.msgEl.classList.remove('typing');
-      this.msgEl.textContent = String(state.line);
+      this.msgEl.textContent = stripMarkup(state.line);   // instant render: drop tags, plain text
       this.msgEl.scrollTop = this.msgEl.scrollHeight;
       this.play(expr);
     }
 
+    // Looping "Roll is thinking…" status while her brain works — resting face + blink (NOT talking),
+    // pulsing yellow-orange (CSS .thinking). Cleared the moment a real line starts.
+    thinking() {
+      this._clear();
+      this._stopThinking();
+      this.talking = false;
+      this.queue.length = 0;
+      this.play('neutral');                 // calm resting face + blink; mood-driven later
+      this.msgEl.classList.remove('typing');
+      this.msgEl.textContent = '';          // wipe the old reply FIRST, so it doesn't flash orange
+      this.msgEl.classList.add('thinking');
+      const text = 'Roll is thinking';        // no trailing dots — they spilled to a second line
+      let i = 0, hold = 0;
+      this._thinkTimer = setInterval(() => {
+        if (hold > 0) { if (--hold === 0) { i = 0; this.msgEl.textContent = ''; } return; }
+        this.msgEl.textContent = text.slice(0, ++i);
+        if (i >= text.length) hold = 6;       // let the full phrase sit, then clear + retype
+      }, 150);                                 // slower, deliberate type-out
+    }
+    _stopThinking() {
+      if (this._thinkTimer) { clearInterval(this._thinkTimer); this._thinkTimer = null; }
+      this.msgEl.classList.remove('thinking');
+    }
+
     _startSpeak(state) {
       this._clear();
+      this._stopThinking();
       this.talking = true;
       // fires as the line ACTUALLY starts typing (not when it was queued) so a caller can
       // sync UI — e.g. the colored "which tab" header — to the message on screen.
       if (this.onStart) { try { this.onStart(state); } catch (_) {} }
       if (state.clip) this._playClip(state.clip); // her chosen exclamation, at the start of the line
-      const expr = NAMES.includes(state.expression) ? state.expression : 'neutral';
-      const a = ANIM[expr];
-      // animate the emotion while talking; if it's static, flap the mouth instead
-      const talkAnim = (a && a.frames.length > 1 && a.mode !== 'hold') ? expr : 'talk';
-      this.play(talkAnim);
+
+      const baseExpr = NAMES.includes(state.expression) ? state.expression : 'neutral';
+      // Untagged lines with a strong base expression still emote the whole way (back-compat); tagged
+      // emotion spans override per-segment. Everything else lip-syncs.
+      const baseEmote = STRONG_EMOTION[baseExpr] ? baseExpr : null;
+      const attrs = parseMarkup(String(state.line));
+      const wrapped = this._wrap(attrs.map((c) => c.ch).join(''));   // index-aligned with attrs
 
       this.msgEl.textContent = '';
       this.msgEl.classList.add('typing');
-      const text = String(state.line);
+      let span = null, spanKey = null, emoteNow = ' ';
       let i = 0;
-      this.typeTimer = setInterval(() => {
-        const ch = text[i];
-        this.msgEl.textContent = text.slice(0, ++i);
-        this.msgEl.scrollTop = this.msgEl.scrollHeight; // keep the newest line in view
-        if (ch && ch.trim() && i % 2 === 0) this._blip(ch); // every other letter = animalese
-        if (i >= text.length) this._finish(expr);
-      }, 38);
+
+      // Per-character stepper (setTimeout so pacing/pauses can vary the delay): builds styled spans,
+      // flips between emote and lip-sync at span boundaries, and drives the mouth on twos.
+      const step = () => {
+        if (i >= attrs.length) { this._finish(baseExpr); return; }
+        const a = attrs[i];
+        const ch = wrapped[i] != null ? wrapped[i] : a.ch;
+
+        const emote = a.emote || baseEmote;
+        if (emote !== emoteNow) {
+          emoteNow = emote;
+          span = null;                                   // force a fresh span across an emote boundary
+          if (emote) { this._neutralTalk = false; this.play(emote); }
+          else {
+            this._neutralTalk = true; this._mode = 'talk';
+            if (this.animTimer) { clearInterval(this.animTimer); this.animTimer = null; }
+            this._frame(MOUTH.closed); this._scheduleBlink();
+          }
+        }
+
+        const key = (a.b ? 'b' : '') + (a.i ? 'i' : '') + (a.shake ? 's' : '') + (a.wave ? 'w' : '') + (a.color || '');
+        if (!span || key !== spanKey) {
+          span = document.createElement('span');
+          if (a.b) span.style.fontWeight = 'bold';
+          if (a.i) span.style.fontStyle = 'italic';
+          if (a.color) span.style.color = a.color;
+          if (a.shake) span.classList.add('fx-shake');
+          if (a.wave) span.classList.add('fx-wave');
+          this.msgEl.appendChild(span);
+          spanKey = key;
+        }
+        span.textContent += ch;
+        this.msgEl.scrollTop = this.msgEl.scrollHeight;
+
+        if (ch.trim() && i % 2 === 0) this._blip(ch);                 // animalese every other letter
+        if (this._neutralTalk && i % 2 === 0) this._mouthForChar(ch); // mouth on twos
+
+        i += 1;
+        let delay = 38 / (a.speed || 1);
+        if (a.pause) delay += a.pause;                                // explicit [.] / [p]
+        if ('.!?'.includes(ch)) delay += 170;                         // breathe at sentence ends
+        else if (',;:'.includes(ch)) delay += 80;
+        this.typeTimer = setTimeout(step, delay);
+      };
+      step();
     }
 
     _finish(expr) {
       this._clear();
       this.talking = false;
       this.msgEl.classList.remove('typing');
-      this.play(expr);                       // settle on the emotion
+      this.play(STRONG_EMOTION[expr] ? expr : 'neutral');   // strong emotes hold their face; else rest
       if (this.queue.length) {
         // hold the finished line on screen at least half a second, then type the next one
         this.settleTimer = setTimeout(() => { this._startSpeak(this.queue.shift()); }, 500);

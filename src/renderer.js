@@ -569,11 +569,12 @@ async function chatToRoll(message) {
   if (m === '!') { openTasks(); return; }                          // bare "!" → just open the task panel
   if (m.startsWith('!')) { launchTask(m.slice(1).trim()); return; } // "!do something" → Roll actually does it
   window.souljaterm.rollLog('you', '', m);                          // your side of the conversation (timestamped)
-  renderRoll({ expression: 'talk', line: '...' });
+  rollFace.thinking();                                              // looping "Roll is thinking..." until she answers
   try {
     const state = await window.souljaterm.rollSpeak({ kind: 'chat', message, brain: currentBrain(), tabCount: tabs.length });
-    if (state && state.line) { renderRoll(state); window.souljaterm.rollLog('roll', '', state.line); } // and hers
-  } catch (_) {}
+    if (state && state.line) { renderRoll(state); window.souljaterm.rollLog('roll', '', state.line); } // and hers (stops thinking)
+    else rollFace.show({ expression: 'neutral', line: "…my brain's off — flip it to CLI/API and I can really chat." });
+  } catch (_) { rollFace.show({ expression: 'neutral', line: '…that one tripped me up. Try again?' }); }
 }
 // Roll's own housekeeping notices (e.g. memory compaction) — pushed from main, rendered in character.
 if (window.souljaterm.onRollNote) window.souljaterm.onRollNote((s) => { if (s && s.line && rollActive()) renderRoll(s); });
