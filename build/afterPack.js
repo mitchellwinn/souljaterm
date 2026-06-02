@@ -17,6 +17,11 @@ exports.default = async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin') return;
   // A real cert is configured — let electron-builder sign properly; don't clobber it.
   if (process.env.CSC_LINK || process.env.CSC_NAME) return;
+  // For a universal build, electron-builder packs each arch into a "…-temp" dir and then merges
+  // them. Ad-hoc signing a slice rewrites its Electron Framework _CodeSignature/CodeResources, so
+  // the two slices no longer match and the merge aborts ("Expected all non-binary files to have
+  // identical SHAs"). Skip the temp slices — sign only the final merged app (and single-arch builds).
+  if (/-temp$/.test(context.appOutDir)) return;
 
   const appName = `${context.packager.appInfo.productFilename}.app`;
   const appPath = path.join(context.appOutDir, appName);
