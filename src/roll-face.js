@@ -115,11 +115,13 @@
       try {
         if (localStorage.getItem('rollVoice') === 'off') return;
       } catch (_) {}
-      const code = (ch.toLowerCase().charCodeAt(0) || 100);
+      const lc = ch.toLowerCase();
+      const code = (lc.charCodeAt(0) || 100);
       // higher, feminine register; pitch wanders with the letter = "speech"
-      const freq = 620 + (code % 22) * 26;
+      const freq = 520 + (code % 22) * 22;
+      const isCons = lc >= 'a' && lc <= 'z' && 'aeiou'.indexOf(lc) === -1; // consonants get a vibrato wobble
       for (const ctx of [this._audio, this._cap]) {
-        if (ctx) { try { this._tone(ctx, freq); } catch (_) { /* this sink blocked — skip */ } }
+        if (ctx) { try { this._tone(ctx, freq, isCons); } catch (_) { /* this sink blocked — skip */ } }
       }
     }
 
@@ -131,26 +133,36 @@
       return isNaN(v) ? 0.55 : Math.max(0, Math.min(1, v));
     }
 
-    // Emit one animalese blip at `freq` into a single AudioContext.
-    _tone(ctx, freq) {
+    // Emit one animalese "boop" at `freq` into a single AudioContext. A sine that glides down a
+    // touch per letter (bubbly), consonants get a quick vibrato wobble for "speechy" texture, and
+    // a subtle square wave an octave down adds retro low-end body. (Preview voice #6 + sub-bass.)
+    _tone(ctx, freq, isCons) {
       if (ctx.state === 'suspended') ctx.resume();
       const t = ctx.currentTime;
       // soft lowpass for a rounded, non-buzzy tone
       const lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass'; lp.frequency.value = 2400; lp.Q.value = 0.7;
+      lp.type = 'lowpass'; lp.frequency.value = 1900; lp.Q.value = 0.5;
       const peak = Math.max(0.0002, 0.07 * this._blipVol());
       const g = ctx.createGain();
       g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(peak, t + 0.012); // gentle attack
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09); // soft tail
+      g.gain.exponentialRampToValueAtTime(peak, t + 0.015); // gentle attack
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.1); // soft tail
       lp.connect(g).connect(ctx.destination);
-      // main triangle voice + a quiet detuned sine for a subtle cyborg shimmer
-      const o1 = ctx.createOscillator(); o1.type = 'triangle'; o1.frequency.value = freq;
-      const o2 = ctx.createOscillator(); o2.type = 'sine'; o2.frequency.value = freq * 1.5; o2.detune.value = 8;
-      const g2 = ctx.createGain(); g2.gain.value = 0.35;
-      o1.connect(lp); o2.connect(g2).connect(lp);
-      o1.start(t); o2.start(t);
-      o1.stop(t + 0.1); o2.stop(t + 0.1);
+      // main sine "boop" — glides down slightly across the note
+      const o = ctx.createOscillator(); o.type = 'sine';
+      o.frequency.setValueAtTime(freq * 1.15, t);
+      o.frequency.exponentialRampToValueAtTime(freq * 0.9, t + 0.1);
+      o.connect(lp); o.start(t); o.stop(t + 0.11);
+      // subtle square sub-bass an octave down — low gain so it's felt as body, not heard as buzz
+      const sub = ctx.createOscillator(); sub.type = 'square'; sub.frequency.value = freq * 0.5;
+      const sg = ctx.createGain(); sg.gain.value = 0.14;
+      sub.connect(sg).connect(lp); sub.start(t); sub.stop(t + 0.11);
+      // consonants wobble (vibrato); vowels glide clean
+      if (isCons) {
+        const lfo = ctx.createOscillator(); lfo.frequency.value = 20;
+        const lfoG = ctx.createGain(); lfoG.gain.value = 26;
+        lfo.connect(lfoG).connect(o.detune); lfo.start(t); lfo.stop(t + 0.11);
+      }
     }
 
     // Clip playback gain. Recorded clips are far hotter than the synthesized animalese (~0.04 peak),
@@ -185,7 +197,9 @@
           let buf = bufs.get(ctx);
           if (!buf) { buf = await ctx.decodeAudioData(bytes.slice(0)); bufs.set(ctx, buf); }
           const src = ctx.createBufferSource(); src.buffer = buf;
-          const g = ctx.createGain(); g.gain.value = this._clipVol();
+          // CLIP_SCALE pulls the whole recorded-clip range down so the slider lives at a usable
+          // position instead of pinned near zero — the raw .wav files are very hot.
+          const g = ctx.createGain(); g.gain.value = this._clipVol() * 0.45;
           src.connect(g).connect(ctx.destination);
           src.start();
         } catch (_) { /* this sink failed — skip it */ }

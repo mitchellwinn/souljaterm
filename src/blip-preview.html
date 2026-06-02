@@ -1,0 +1,227 @@
+<!doctype html>
+<!-- Standalone audition page for Roll's animalese "blip" voices. Open in a browser or
+     `open src/blip-preview.html`. Each card plays a sample phrase letter-by-letter using
+     that candidate synth, mirroring the real engine (every other letter, freq wanders by
+     letter). Pick one and we'll wire it into roll-face.js as the default `_tone`. -->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Roll blip voices</title>
+<style>
+  body { font-family: 'MS Sans Serif', Tahoma, sans-serif; background: #b8d8c0; color: #103; margin: 0; padding: 24px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 18px; font-size: 13px; opacity: .8; }
+  .row { display: flex; gap: 10px; align-items: center; margin: 0 0 18px; font-size: 13px; }
+  input[type=text] { font: inherit; padding: 4px 6px; width: 220px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px,1fr)); gap: 14px; }
+  .card { background: #e8f2ea; border: 2px solid #6a8; border-radius: 8px; padding: 14px; }
+  .card h2 { font-size: 15px; margin: 0 0 4px; }
+  .card .desc { font-size: 12px; opacity: .75; min-height: 30px; margin: 0 0 10px; }
+  button { font: inherit; padding: 6px 14px; cursor: pointer; border: 2px solid #355; background: #cfe6d4; border-radius: 6px; }
+  button:active { background: #aacdb2; }
+  .play { width: 100%; font-weight: bold; }
+</style>
+</head>
+<body>
+  <h1>Roll blip voices — audition</h1>
+  <p class="sub">Click a voice to hear it "speak" the sample phrase. Tell me which number feels like the cute hum.</p>
+  <div class="row">
+    <label>Sample: <input id="phrase" type="text" value="hi there, roll here" /></label>
+    <label>Volume: <input id="vol" type="range" min="0" max="100" value="55" /></label>
+  </div>
+  <div class="grid" id="grid"></div>
+
+<script>
+let ctx;
+function ac() { return ctx || (ctx = new (window.AudioContext || window.webkitAudioContext)()); }
+function vol() { return (+document.getElementById('vol').value || 0) / 100; }
+
+// Per-letter frequency, same idea as the real engine but each voice can pick its own register.
+function freqFor(ch, base, spread) {
+  const code = (ch.toLowerCase().charCodeAt(0) || 100);
+  return base + (code % 22) * spread;
+}
+
+// Snap a letter to a note in a major-pentatonic scale (C D E G A …) spanning a few octaves.
+// Pentatonic has no dissonant intervals, so ANY sequence of letters sounds melodic — the voice
+// stays appealing no matter what Roll says. `root` Hz = the lowest note (degree 0).
+const PENTA = [0, 2, 4, 7, 9];                       // major-pentatonic semitone offsets
+function scaleNote(deg, root) {
+  const oct = Math.floor(deg / PENTA.length);
+  const semis = PENTA[((deg % PENTA.length) + PENTA.length) % PENTA.length] + 12 * oct;
+  return root * Math.pow(2, semis / 12);
+}
+function degFor(ch, span) { return (ch.toLowerCase().charCodeAt(0) || 100) % span; }
+
+// ── Candidate voices ───────────────────────────────────────────────────────────
+// Each takes (ctx, freq, peak) and emits one short note. Tweak freely once you pick one.
+const VOICES = [
+  {
+    name: '1 · Current (chirp)',
+    desc: 'What ships today: bright triangle + detuned-sine shimmer. The reference.',
+    base: 620, spread: 26,
+    play(c, f, peak) {
+      const t = c.currentTime;
+      const lp = c.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=2400; lp.Q.value=0.7;
+      const g = c.createGain();
+      g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(peak,t+0.012); g.gain.exponentialRampToValueAtTime(0.0001,t+0.09);
+      lp.connect(g).connect(c.destination);
+      const o1=c.createOscillator(); o1.type='triangle'; o1.frequency.value=f;
+      const o2=c.createOscillator(); o2.type='sine'; o2.frequency.value=f*1.5; o2.detune.value=8;
+      const g2=c.createGain(); g2.gain.value=0.35; o1.connect(lp); o2.connect(g2).connect(lp);
+      o1.start(t); o2.start(t); o1.stop(t+0.1); o2.stop(t+0.1);
+    },
+  },
+  {
+    name: '2 · Soft hum (sine)',
+    desc: 'Pure sine, lower & rounder, slow attack and longer tail. Warmest / least "beepy".',
+    base: 380, spread: 18,
+    play(c, f, peak) {
+      const t = c.currentTime;
+      const lp = c.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=1500; lp.Q.value=0.5;
+      const g = c.createGain();
+      g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(peak,t+0.03); g.gain.exponentialRampToValueAtTime(0.0001,t+0.13);
+      lp.connect(g).connect(c.destination);
+      const o=c.createOscillator(); o.type='sine'; o.frequency.value=f; o.connect(lp);
+      o.start(t); o.stop(t+0.14);
+    },
+  },
+  {
+    name: '3 · Ocarina hum',
+    desc: 'Sine + a quiet octave-up sine. Hollow, flute-y, cute. A touch brighter than #2.',
+    base: 440, spread: 20,
+    play(c, f, peak) {
+      const t = c.currentTime;
+      const lp = c.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=1800; lp.Q.value=0.6;
+      const g = c.createGain();
+      g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(peak,t+0.02); g.gain.exponentialRampToValueAtTime(0.0001,t+0.11);
+      lp.connect(g).connect(c.destination);
+      const o1=c.createOscillator(); o1.type='sine'; o1.frequency.value=f;
+      const o2=c.createOscillator(); o2.type='sine'; o2.frequency.value=f*2;
+      const g2=c.createGain(); g2.gain.value=0.22; o1.connect(lp); o2.connect(g2).connect(lp);
+      o1.start(t); o2.start(t); o1.stop(t+0.12); o2.stop(t+0.12);
+    },
+  },
+  {
+    name: '4 · Wobble hum (vibrato)',
+    desc: 'Triangle with a gentle pitch wobble — playful, "singing" feel. Most expressive.',
+    base: 420, spread: 18,
+    play(c, f, peak) {
+      const t = c.currentTime;
+      const lp = c.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=1700; lp.Q.value=0.5;
+      const g = c.createGain();
+      g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(peak,t+0.025); g.gain.exponentialRampToValueAtTime(0.0001,t+0.13);
+      lp.connect(g).connect(c.destination);
+      const o=c.createOscillator(); o.type='triangle'; o.frequency.value=f;
+      const lfo=c.createOscillator(); lfo.frequency.value=13;
+      const lfoG=c.createGain(); lfoG.gain.value=9; lfo.connect(lfoG).connect(o.detune);
+      o.connect(lp); o.start(t); lfo.start(t); o.stop(t+0.14); lfo.stop(t+0.14);
+    },
+  },
+  {
+    name: '5 · Boop (pitch glide)',
+    desc: 'Sine that slides down a little each note — bubbly, toy-like. Bounciest.',
+    base: 520, spread: 22,
+    play(c, f, peak) {
+      const t = c.currentTime;
+      const lp = c.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=1900; lp.Q.value=0.5;
+      const g = c.createGain();
+      g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(peak,t+0.015); g.gain.exponentialRampToValueAtTime(0.0001,t+0.1);
+      lp.connect(g).connect(c.destination);
+      const o=c.createOscillator(); o.type='sine';
+      o.frequency.setValueAtTime(f*1.15,t); o.frequency.exponentialRampToValueAtTime(f*0.9,t+0.1);
+      o.connect(lp); o.start(t); o.stop(t+0.11);
+    },
+  },
+  {
+    name: '6 · Boop + consonant vibrato (+ square sub-bass)',
+    desc: 'The boop with consonant vibrato, plus a subtle square wave an octave down in the bass for retro low-end body. Her in-app voice now matches this.',
+    base: 520, spread: 22,
+    play(c, f, peak, isCons) {
+      const t = c.currentTime;
+      const lp = c.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=1900; lp.Q.value=0.5;
+      const g = c.createGain();
+      g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(peak,t+0.015); g.gain.exponentialRampToValueAtTime(0.0001,t+0.1);
+      lp.connect(g).connect(c.destination);
+      const o=c.createOscillator(); o.type='sine';
+      o.frequency.setValueAtTime(f*1.15,t); o.frequency.exponentialRampToValueAtTime(f*0.9,t+0.1);
+      o.connect(lp); o.start(t); o.stop(t+0.11);
+      // subtle square sub-bass, one octave down — low gain so it's felt as body, not heard as buzz
+      const sub=c.createOscillator(); sub.type='square'; sub.frequency.value=f*0.5;
+      const sg=c.createGain(); sg.gain.value=0.14; sub.connect(sg).connect(lp);
+      sub.start(t); sub.stop(t+0.11);
+      if (isCons) {
+        const lfo=c.createOscillator(); lfo.frequency.value=20;
+        const lfoG=c.createGain(); lfoG.gain.value=26; lfo.connect(lfoG).connect(o.detune);
+        lfo.start(t); lfo.stop(t+0.11);
+      }
+    },
+  },
+  {
+    name: '7 · Babble (pentatonic + chip)',
+    desc: 'Every letter snaps to an in-tune pentatonic note so it stays melodic no matter what she says. Triangle body for vowels, square bite for consonants, plus a quiet chiptune octave sparkle. Vowels get in-tune formant color; consonants buzz with vibrato.',
+    base: 360, spread: 46,
+    play(c, f, peak, isCons, ch) {
+      const t = c.currentTime;
+      const root = 262;                                            // C4 — lowest note
+      const deg = degFor(ch, 12);                                  // letter → scale degree (~2 octaves)
+      const f0 = scaleNote(deg, root);                             // in-tune target note
+      const fStart = scaleNote(deg + ((deg % 2) ? 1 : -1), root);  // glide in from an adjacent scale note
+      const dur = isCons ? 0.085 : 0.14;                           // consonants punchy, vowels sustained
+      const lp = c.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value = isCons ? 2400 : 1900; lp.Q.value=0.6;
+      const g = c.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(peak, t + (isCons ? 0.008 : 0.022));
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      lp.connect(g).connect(c.destination);
+      // body: triangle for vowels (warm), square for consonants (chip bite) — both tamed by the lowpass
+      const o = c.createOscillator(); o.type = isCons ? 'square' : 'triangle';
+      o.frequency.setValueAtTime(fStart, t);
+      o.frequency.exponentialRampToValueAtTime(f0, t + Math.min(dur, 0.05));  // quick portamento into the note, then hold
+      o.connect(lp); o.start(t); o.stop(t + dur + 0.01);
+      // chiptune sparkle: a quiet square an octave up, locked to the in-tune note
+      const chip = c.createOscillator(); chip.type='square'; chip.frequency.value = f0 * 2;
+      const cg = c.createGain(); cg.gain.value = 0.08; chip.connect(cg).connect(lp);
+      chip.start(t); chip.stop(t + dur + 0.01);
+      if (isCons) {
+        const lfo = c.createOscillator(); lfo.frequency.value = 22;
+        const lfoG = c.createGain(); lfoG.gain.value = 30; lfo.connect(lfoG).connect(o.detune);
+        lfo.start(t); lfo.stop(t + dur);
+      } else {
+        // vowel formant: 2nd sine at a just-intonation overtone (octave/fifth) → in-tune a/e/i/o/u color
+        const FORM = { a: 2, e: 2.5, i: 3, o: 1.5, u: 4 };
+        const o2 = c.createOscillator(); o2.type='sine'; o2.frequency.value = f0 * (FORM[(ch||'a').toLowerCase()] || 2);
+        const g2 = c.createGain(); g2.gain.value = 0.26; o2.connect(g2).connect(lp);
+        o2.start(t); o2.stop(t + dur + 0.01);
+      }
+    },
+  },
+];
+
+const VOWELS = 'aeiou';
+function isConsonant(ch) { const l = (ch || '').toLowerCase(); return l >= 'a' && l <= 'z' && VOWELS.indexOf(l) === -1; }
+
+function speak(voice) {
+  const c = ac(); if (c.state === 'suspended') c.resume();
+  const phrase = document.getElementById('phrase').value || 'hi there';
+  const peak = Math.max(0.0002, 0.07 * vol());
+  let i = 0;
+  const timer = setInterval(() => {
+    if (i >= phrase.length) { clearInterval(timer); return; }
+    const ch = phrase[i];
+    if (ch && ch.trim() && i % 2 === 0) voice.play(c, freqFor(ch, voice.base, voice.spread), peak, isConsonant(ch), ch);
+    i++;
+  }, 38);
+}
+
+const grid = document.getElementById('grid');
+VOICES.forEach((v) => {
+  const card = document.createElement('div'); card.className = 'card';
+  card.innerHTML = `<h2>${v.name}</h2><div class="desc">${v.desc}</div>`;
+  const btn = document.createElement('button'); btn.className='play'; btn.textContent='▶ play';
+  btn.onclick = () => speak(v);
+  card.appendChild(btn); grid.appendChild(card);
+});
+</script>
+</body>
+</html>
