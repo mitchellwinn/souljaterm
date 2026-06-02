@@ -123,9 +123,10 @@ body.on .power { display: none; }
   .feats { font-size: 12px; }
   .btn.big { font-size: 14px; }
 
-  /* Roll panel stays a column: ROLL header on top, a centered SQUARE face,
-     then the message box expanded full-width below (even before she speaks). */
-  .roll { width: 100%; flex: 0 0 auto; }
-  #face { width: 100%; max-width: 200px; margin: 8px auto; }
-  #msg { height: 120px; }
+  /* Roll panel: ROLL header full-width on top (it wraps the row below it), then her
+     square face to the LEFT of the message box, both the same height. */
+  .roll { width: 100%; flex: 0 0 auto; flex-flow: row wrap; gap: 6px; align-items: flex-start; }
+  .roll-head { width: 100%; }
+  #face { width: 120px; flex: 0 0 120px; height: 120px; margin: 0; }
+  #msg { flex: 1 1 0; min-width: 0; height: 120px; }
 }
