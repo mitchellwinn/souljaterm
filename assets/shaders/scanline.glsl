@@ -24,6 +24,7 @@ void main() {
     // CRT power-on: collapsed bright scanline -> wide stretch -> bloom open + flicker -> settle.
     float poBright = 1.0, poSat = 1.0;
     float po = clamp(POWER_ON, 0.0, 1.0);
+    if (po <= 0.0) { gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; } // tube off: black until she fires on
     if (po < 1.0) {
         float h, sx;
         if (po < 0.10)      { h = 0.012;               sx = 1.30;               poBright = 7.0;             poSat = 0.0; }

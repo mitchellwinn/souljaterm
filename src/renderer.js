@@ -23,8 +23,10 @@ const el = {
   fontPicker: document.getElementById('font-picker'),
   rollBrain: document.getElementById('roll-brain'),
   voicePick: document.getElementById('voice-pick'),
+  voiceStyle: document.getElementById('roll-voice-style'),
   voiceVol: document.getElementById('voice-vol'),
   blipVol: document.getElementById('blip-vol'),
+  sfxVol: document.getElementById('sfx-vol'),
   dirPick: document.getElementById('dir-pick'),
   memClear: document.getElementById('mem-clear'),
   chatForm: document.getElementById('chat-form'),
@@ -48,6 +50,7 @@ const el = {
   rollClose: document.getElementById('roll-close'),
   rollSpeed: document.getElementById('roll-speed'),
   rollLang: document.getElementById('roll-lang'),
+  rollVerbosity: document.getElementById('roll-verbosity'),
   sysinfo: document.getElementById('sysinfo'),
   siBatt: document.getElementById('si-batt'),
   siDay: document.getElementById('si-day'),
@@ -444,6 +447,11 @@ const ROLL_SETTING_APPLIERS = {
     try { localStorage.setItem('rollVoice', v); } catch (_) {}
     if (el.voicePick) el.voicePick.value = v;
   },
+  voiceStyle(v) {
+    if (v !== 'mora' && v !== 'blips') return;
+    try { localStorage.setItem('rollVoiceStyle', v); } catch (_) {}
+    if (el.voiceStyle) el.voiceStyle.value = v;
+  },
   clipVolume(v) {
     if (isNaN(Number(v))) return; const n = clamp01to100(v);
     try { localStorage.setItem('rollClipVol', String(n / 100)); } catch (_) {}
@@ -454,6 +462,11 @@ const ROLL_SETTING_APPLIERS = {
     try { localStorage.setItem('rollBlipVol', String(n / 100)); } catch (_) {}
     if (el.blipVol) el.blipVol.value = n;
   },
+  sfxVolume(v) {
+    if (isNaN(Number(v))) return; const n = clamp01to100(v);
+    try { localStorage.setItem('rollSfxVol', String(n / 100)); } catch (_) {}
+    if (el.sfxVol) el.sfxVol.value = n;
+  },
   textSpeed(v) {
     const ms = { slow: SPEED_MS_MAX, normal: 38, fast: SPEED_MS_MIN }[String(v).toLowerCase()];
     if (ms == null) return;
@@ -461,9 +474,14 @@ const ROLL_SETTING_APPLIERS = {
     if (el.rollSpeed) el.rollSpeed.value = speedToSlider(ms);
   },
   brain(v) {
-    if (!['off', 'cli', 'api'].includes(v)) return;
+    if (!['off', 'cli', 'api', 'free'].includes(v)) return;
     try { localStorage.setItem('rollBrain', v); } catch (_) {}
     if (el.rollBrain) el.rollBrain.value = v;
+  },
+  verbosity(v) {   // reply length 0..100 (short↔long); the token budget derives from it
+    if (isNaN(Number(v))) return; const n = Math.max(0, Math.min(100, Math.round(Number(v))));
+    try { localStorage.setItem('rollVerbosity', String(n)); } catch (_) {}
+    if (el.rollVerbosity) el.rollVerbosity.value = n;
   },
   crt(v) {
     if (v !== 'on' && v !== 'off') return;
@@ -479,6 +497,19 @@ function setRollLang(v) {
   try { localStorage.setItem('rollLang', v); } catch (_) {}
   if (el.rollLang) el.rollLang.value = v;
 }
+
+// One reply-length control (0..100, left=short → right=long): it both steers the brain's prompt
+// (brevity↔chatty, CLI + API) AND sizes the token ceiling underneath, so it can never truncate her at
+// the length she's aiming for. Stored as rollVerbosity; the token budget is derived, not a separate knob.
+const TOKENS_MIN = 128, TOKENS_MAX = 1536;
+function currentVerbosity() { try { const s = localStorage.getItem('rollVerbosity'); if (s != null && s !== '') return Math.max(0, Math.min(100, parseInt(s, 10))); } catch (_) {} return 30; }
+function lengthToTokens(v) { return Math.max(TOKENS_MIN, Math.min(TOKENS_MAX, Math.round(160 + (v / 100) * 1376))); }
+function currentMaxTokens() { return lengthToTokens(currentVerbosity()); }
+function initVerbosity() {
+  if (!el.rollVerbosity) return;
+  el.rollVerbosity.value = currentVerbosity();
+  el.rollVerbosity.addEventListener('input', () => { try { localStorage.setItem('rollVerbosity', String(el.rollVerbosity.value)); } catch (_) {} });
+}
 function initRollLang() {
   if (!el.rollLang) return;
   el.rollLang.value = currentLang();
@@ -488,7 +519,7 @@ function initRollLang() {
 // brain mode: off (scripted) | cli (subscription) | api (Haiku key)
 function currentBrain() { try { return localStorage.getItem('rollBrain') || 'cli'; } catch { return 'cli'; } }
 function initBrainPicker() {
-  const opts = [['cli', 'Plan (CLI)'], ['api', 'API (Haiku)'], ['off', 'Off (scripted)']];
+  const opts = [['cli', 'Plan (CLI)'], ['free', 'Free (Gemini)'], ['api', 'API (Haiku)'], ['off', 'Off (scripted)']];
   const saved = currentBrain();
   el.rollBrain.replaceChildren(...opts.map(([v, label]) => {
     const o = document.createElement('option'); o.value = v; o.textContent = label; o.selected = v === saved; return o;
@@ -511,7 +542,7 @@ async function roll(kind, ctx) {
   if (now - _lastRollAt < ROLL_COOLDOWN_MS) return; // global cooldown on LLM lines
   _lastRollAt = now;
   try {
-    const state = await window.souljaterm.rollSpeak({ kind, ...ctx, brain: currentBrain(), lang: currentLang(), tabCount: tabs.length });
+    const state = await window.souljaterm.rollSpeak({ kind, ...ctx, brain: currentBrain(), lang: currentLang(), maxTokens: currentMaxTokens(), verbosity: currentVerbosity(), tabCount: tabs.length });
     if (state && state.settings) applyRollSettings(state.settings);    // she can adjust her own settings on request
     if (state && state.line) renderRoll({ ...state, tab: ctx.tab, kind }); // carry tab (header) + kind (clip choice)
   } catch (_) { /* never let Roll break the terminal */ }
@@ -661,7 +692,7 @@ async function chatToRoll(message) {
   window.souljaterm.rollLog('you', '', m);                          // your side of the conversation (timestamped)
   rollFace.thinking();                                              // looping "Roll is thinking..." until she answers
   try {
-    const state = await window.souljaterm.rollSpeak({ kind: 'chat', message, brain: currentBrain(), lang: currentLang(), tabCount: tabs.length });
+    const state = await window.souljaterm.rollSpeak({ kind: 'chat', message, brain: currentBrain(), lang: currentLang(), maxTokens: currentMaxTokens(), verbosity: currentVerbosity(), tabCount: tabs.length });
     if (state && state.settings) applyRollSettings(state.settings);   // "speak Japanese" / "be quiet" / etc. — she does it herself
     if (state && state.line) { renderRoll(state); window.souljaterm.rollLog('roll', '', state.line); } // and hers (stops thinking)
     else rollFace.show({ expression: 'neutral', line: L().brainOffChat() });
@@ -676,7 +707,7 @@ if (window.souljaterm.onRollNote) window.souljaterm.onRollNote((s) => { if (s &&
 async function reactToPrompt(project, prompt, tab) {
   if (!rollActive()) return;                         // minimized → no personality reaction (saves a brain call)
   try {
-    const state = await window.souljaterm.rollSpeak({ kind: 'prompt', project, prompt, brain: currentBrain(), lang: currentLang(), tabCount: tabs.length });
+    const state = await window.souljaterm.rollSpeak({ kind: 'prompt', project, prompt, brain: currentBrain(), lang: currentLang(), maxTokens: currentMaxTokens(), verbosity: currentVerbosity(), tabCount: tabs.length });
     if (state && state.settings) applyRollSettings(state.settings);
     if (state && state.line) renderRoll({ ...state, tab, kind: 'prompt' });
   } catch (_) {}
@@ -856,6 +887,17 @@ function initVoicePick() {
     try { localStorage.setItem('rollVoice', el.voicePick.value); } catch (_) {}
   });
 }
+// Voice style: spoken syllables (kana + English-as-katakana) vs the synth blips. Unset defaults to
+// syllables for Japanese, blips for English — same rule roll-face uses, so the control matches what plays.
+function initVoiceStyle() {
+  if (!el.voiceStyle) return;
+  let v = null;
+  try { v = localStorage.getItem('rollVoiceStyle'); } catch (_) {}
+  el.voiceStyle.value = (v === 'mora' || v === 'blips') ? v : (currentLang() === 'ja' ? 'mora' : 'blips');
+  el.voiceStyle.addEventListener('change', () => {
+    try { localStorage.setItem('rollVoiceStyle', el.voiceStyle.value); } catch (_) {}
+  });
+}
 // Voice-clip volume (her recorded clips sit much hotter than the animalese, so this dials them
 // down/up to taste). Stored as rollClipVol 0..1; roll-face reads it on every clip.
 function initVoiceVol() {
@@ -878,6 +920,18 @@ function initBlipVol() {
   el.blipVol.value = Math.round(Math.max(0, Math.min(1, v)) * 100);
   el.blipVol.addEventListener('input', () => {
     try { localStorage.setItem('rollBlipVol', String(el.blipVol.value / 100)); } catch (_) {}
+  });
+}
+// Reaction-sound (Animal Crossing emote) volume. roll-face reads 'rollSfxVol' 0..1 per play; default
+// 0.45. Shares the master voice on/off; this only sets level, like the clip/blip sliders.
+function initSfxVol() {
+  if (!el.sfxVol) return;
+  let v = 0.45;
+  try { const s = localStorage.getItem('rollSfxVol'); if (s != null && s !== '') v = parseFloat(s); } catch (_) {}
+  if (isNaN(v)) v = 0.45;
+  el.sfxVol.value = Math.round(Math.max(0, Math.min(1, v)) * 100);
+  el.sfxVol.addEventListener('input', () => {
+    try { localStorage.setItem('rollSfxVol', String(el.sfxVol.value / 100)); } catch (_) {}
   });
 }
 // Baseline typing speed for her replies. roll-face reads 'rollTextSpeed' (ms per character) at the
@@ -1028,7 +1082,7 @@ async function launchTask(promptText, opts) {
   window.souljaterm.taskStart({ id, prompt, dir, model, mode: planFirst ? 'plan' : 'run' });
   (async () => {                                  // witty in-character ack (her brain, with scripted fallback)
     try {
-      const ack = await window.souljaterm.rollSpeak({ kind: 'task_start', prompt, dir, model, brain: currentBrain(), lang: currentLang() });
+      const ack = await window.souljaterm.rollSpeak({ kind: 'task_start', prompt, dir, model, brain: currentBrain(), lang: currentLang(), maxTokens: currentMaxTokens(), verbosity: currentVerbosity() });
       if (ack && ack.settings) applyRollSettings(ack.settings);
       if (ack && ack.line && rollActive()) renderRoll({ ...ack, kind: 'prompt', rollTask: { id, label: clip(prompt, 40) } });
     } catch (_) {}
@@ -1255,11 +1309,14 @@ function initFx() {
   initFontPicker();
   initBrainPicker();
   initVoicePick();
+  initVoiceStyle();           // ⚙ panel: spoken syllables vs synth blips (works for either language)
   initVoiceVol();
   initBlipVol();
+  initSfxVol();               // ⚙ panel: Animal Crossing reaction-sound volume
   initTextSpeed();            // baseline typing speed (Roll settings ⚙)
   initRollSettings();         // ⚙ panel: voice on/off + volumes + speed
   initRollLang();             // ⚙ panel: English / 日本語 (also settable by asking Roll in chat)
+  initVerbosity();            // ⚙ panel: reply length (short ↔ long; also sizes her token budget)
   lastRoll = { expression: 'happy', line: L().greeting() };  // greet in the saved language
   initSysInfo();              // battery / day / clock HUD on the right of the title bar
   initTaskUI();               // Roll's task manager panel (☰ in her header, or "!" in chat)

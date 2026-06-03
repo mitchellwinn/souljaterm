@@ -307,7 +307,7 @@ body.darwin #app.sidebar-collapsed #tabbar { padding-left: 76px; }
 .foot-row { display: flex; align-items: center; gap: 6px; }
 .foot-label { font-size: 9px; letter-spacing: 1px; font-weight: bold; width: 30px; }
 #font-picker, #roll-brain, #dir-pick { flex: 1; font: 11px var(--mono-font); padding: 0 2px; min-width: 0; }
-#voice-vol, #blip-vol, #roll-speed { flex: 1; min-width: 0; accent-color: #9ece6a; height: 14px; }
+.roll-settings-body input[type=range] { flex: 1; min-width: 0; accent-color: #9ece6a; height: 14px; }
 #dir-pick { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 
 #assistant-restore { position: fixed; right: 8px; bottom: 8px; display: none; z-index: 10;
@@ -420,7 +420,7 @@ body.darwin #app.sidebar-collapsed #tabbar { padding-left: 76px; }
 #roll-modal[hidden] { display: none; }
 #roll-dialog { width: 320px; max-width: 92vw; display: flex; flex-direction: column; }
 .roll-settings-body { display: flex; flex-direction: column; gap: 9px; padding: 12px; }
-.roll-settings-body .fx-row > span:first-child { flex: 0 0 52px; }
+.roll-settings-body .fx-row > span:first-child { flex: 0 0 62px; }
 .roll-section-label { font: bold 9px var(--mono-font); letter-spacing: 1.5px; color: var(--darker);
   margin-top: 2px; border-bottom: 1px solid var(--dark); padding-bottom: 2px; }
 .roll-section-label:first-child { margin-top: 0; }

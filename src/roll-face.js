@@ -49,7 +49,27 @@
     'ぴゃ': 'pya', 'ぴゅ': 'pyu', 'ぴょ': 'pyo',
   };
   const MORA_KEYS = Array.from(new Set([...Object.values(KANA1), ...Object.values(KANA2)]));
+  const KEYSET = new Set(MORA_KEYS);
   const SMALL_Y = 'ゃゅょ';
+  const VIDX = { a: 0, u: 1, o: 2, i: 3, e: 4 };   // vowel -> column in a yōon row [a,u,o,i,e]
+  const inSet = (k) => KEYSET.has(k);
+  // Pick a yōon row member by vowel, falling back to a provided default then the row's -u member.
+  const pickRow = (row, v, def) => { const k = row[VIDX[v]]; return inSet(k) ? k : (inSet(def) ? def : null); };
+
+  // --- Animal Crossing reaction sounds (assets/roll/sfx/*.mp3). She fires one when she enters an
+  // emotion span (so her [happy]…[/happy] tags also *sound*), or explicitly via [sfx=name]. They share
+  // the master voice on/off but have their own volume (rollSfxVol). ---
+  const SFX_SET = new Set(['amazed', 'bashfulness', 'bewilderment', 'cold-chill', 'confident',
+    'curiosity', 'daydreaming', 'delight', 'distress', 'exclamation', 'fearful', 'glee', 'greetings',
+    'heartbreak', 'inspiration', 'intense', 'laughter', 'love', 'mischief', 'mistaken', 'pleased',
+    'pride', 'resignation', 'sheepishness', 'shocked', 'showmanship', 'sighing', 'sleepy', 'sneezing',
+    'worry']);
+  // Her expression names -> the AC reaction that fits, so the emotion tags she already uses play a sound.
+  const EMOTE_SFX = {
+    happy: 'delight', laugh: 'laughter', surprised: 'amazed', shocked: 'shocked', worried: 'worry',
+    sad: 'heartbreak', cry: 'distress', angry: 'intense', rage: 'intense', wink: 'mischief',
+    blush: 'bashfulness', shame: 'sheepishness', whine: 'distress',
+  };
   // Katakana -> hiragana (same 0x60 offset block) so one table voices both scripts.
   const toHira = (ch) => { const c = ch.charCodeAt(0); return (c >= 0x30A1 && c <= 0x30F6) ? String.fromCharCode(c - 0x60) : ch; };
   const vowelOf = (key) => { const v = key[key.length - 1]; return 'aiueo'.includes(v) ? v : ''; };
@@ -79,8 +99,14 @@
       }
       return a;
     };
+    let pendingSfx = null, pendingSfxRate = 1;     // a [sfx=…] fires on the next typed character
     const emit = (s) => {
-      for (const ch of s) { const a = attrFor(); a.ch = ch; a.pause = pause; pause = 0; chars.push(a); }
+      for (const ch of s) {
+        const a = attrFor(); a.ch = ch;
+        a.pause = pause; pause = 0;
+        a.sfx = pendingSfx; a.sfxRate = pendingSfxRate; pendingSfx = null;   // attach to the first char only
+        chars.push(a);
+      }
     };
     const re = /\[(\/?)([a-z.]+)(?:=([^\]]+))?\]/gi;
     let last = 0, m;
@@ -88,7 +114,14 @@
       emit(text.slice(last, m.index));
       last = re.lastIndex;
       const name = m[2].toLowerCase();
-      if (name === '.' || name === 'p' || name === 'pause') { pause += 350; continue; }
+      if (name === '.' || name === 'p') { pause += 350; continue; }
+      if (name === 'pause') { pause += m[3] ? Math.max(0, Math.min(8000, parseInt(m[3], 10) || 350)) : 350; continue; }
+      if (name === 'sfx') {                          // [sfx=love] or [sfx=laughter:1.4] (a reaction at a speed)
+        const [k, r] = String(m[3] || '').split(':');
+        pendingSfx = (k || '').trim().toLowerCase() || null;
+        pendingSfxRate = r ? Math.max(0.5, Math.min(2.5, parseFloat(r) || 1)) : 1;
+        continue;
+      }
       if (m[1] === '/') { for (let k = stack.length - 1; k >= 0; k--) if (stack[k].name === name) { stack.splice(k, 1); break; } }
       else stack.push({ name, val: m[3] });
     }
@@ -142,10 +175,14 @@
       this._clipBytes = {};                  // name -> fetched ArrayBuffer
       this._clipBufs = new Map();            // name -> Map(ctx -> decoded AudioBuffer)
       this._lastClipAt = 0;
-      this._moraBytes = {};                  // mora key -> ArrayBuffer (JP per-syllable voice)
+      this._moraBytes = {};                  // mora key -> ArrayBuffer (per-syllable voice)
       this._moraBufs = new Map();            // mora key -> Map(ctx -> AudioBuffer)
+      this._moraNode = new Map();            // ctx -> last {src, gain}, so a new mora can duck the prior
       this._moraPreloaded = false;
-      this._voiceSkip = false;               // skip the next char's voice (consumed by a yōon pair)
+      this._sfxBytes = {};                   // sfx key -> ArrayBuffer (AC reaction sounds)
+      this._sfxBufs = new Map();             // sfx key -> Map(ctx -> AudioBuffer)
+      this._lastSfxAt = 0;
+      this._voiceSkip = 0;                   // how many upcoming chars a multi-char mora already voiced
       this._moraPos = 0;                     // mora index within the phrase, for the cosmetic downdrift
       this._lastVowel = '';                  // last mora's vowel, so a long-vowel mark ー can extend it
       this.play('idle');
@@ -259,6 +296,14 @@
 
     _langJa() { try { return localStorage.getItem('rollLang') === 'ja'; } catch (_) { return false; } }
     _voiceOff() { try { return localStorage.getItem('rollVoice') === 'off'; } catch (_) { return false; } }
+    // Voice style: 'mora' = spoken syllables (kana + English read as katakana), 'blips' = synth.
+    // Unset defaults to spoken for Japanese, blips for English — the toggle overrides either way.
+    _moraOn() {
+      let s = null; try { s = localStorage.getItem('rollVoiceStyle'); } catch (_) {}
+      if (s === 'mora') return true;
+      if (s === 'blips') return false;
+      return this._langJa();
+    }
 
     // Warm the whole mora bank into the default context once, so the first JP line doesn't gap while
     // each clip fetches. ~100 tiny files; the capture context (if any) decodes lazily on first play.
@@ -276,48 +321,90 @@
       }
     }
 
-    // Cosmetic phrase intonation: start a touch high and drift down across the phrase (catathesis-ish),
-    // reset at each sentence end, plus a hair of jitter. Pitch only — NOT real lexical pitch accent.
-    _driftRate() {
-      const p = Math.min(this._moraPos, 14);
+    // Per-clip playback rate. Three ingredients: (1) a cosmetic phrase downdrift — start a touch high,
+    // drift down, reset at sentence ends (intonation, NOT real pitch accent); (2) faster typing → faster
+    // clips, so they overlap less at quick speeds; (3) a hair of jitter for life. Advances _moraPos.
+    _moraRate() {
+      const p = Math.min(this._moraPos, 12);
       this._moraPos += 1;
-      const drift = 0.08 - p * 0.01;          // +8% at phrase start → -6% by the tail
-      const jitter = (Math.random() - 0.5) * 0.03;
-      return Math.max(0.9, Math.min(1.12, 1 + drift + jitter));
+      const drift = 0.05 - p * 0.006;                       // +5% at phrase start → ~0 by the tail
+      const jitter = (Math.random() - 0.5) * 0.015;
+      const ms = this._baseDelay();                          // her typing speed, ms/char (14..75)
+      const speed = Math.max(1.0, Math.min(1.6, 1 + (38 - ms) / 120)); // faster typing → quicker clips; never lower
+      return Math.max(1.0, Math.min(2.0, speed * (1 + drift + jitter))); // floor at 1.0 so pitch stays up
     }
 
-    // Voice one typed character. JP: play its mora clip (consuming a following small ゃ/ゅ/ょ for yōon,
-    // extending a long-vowel ー, pausing on a small っ). Returns true if it consumed `next`. Anything
-    // without a clip (kanji, Latin, punctuation) falls back to the throttled synth blip.
-    _voiceChar(ch, next, i) {
-      if (this._voiceOff()) return false;
-      if (this._langJa()) {
+    // English/romaji letter(s) -> the nearest mora clip key, read as katakana-English (consonant gets an
+    // epenthetic vowel: t/d -> o, else u; l->r, v->b, f->h row, c->k/s, digraphs sh/ch/th/ph/ck). Returns
+    // { key, consumed } where consumed = how many FOLLOWING chars it ate (a vowel and/or a digraph tail).
+    _latinMora(ch, ahead) {
+      const V = 'aeiou';
+      const c = ch.toLowerCase();
+      if (V.includes(c)) return { key: c, consumed: 0 };     // bare vowel = its own mora (a/i/u/e/o)
+      let cons = c, consumed = 0;
+      const a0 = (ahead[0] || '').toLowerCase();
+      if (c === 's' && a0 === 'h') { cons = 'sh'; consumed = 1; }
+      else if (c === 'c' && a0 === 'h') { cons = 'ch'; consumed = 1; }
+      else if (c === 't' && a0 === 'h') { cons = 's'; consumed = 1; }   // th -> s
+      else if (c === 'p' && a0 === 'h') { cons = 'f'; consumed = 1; }   // ph -> f
+      else if (c === 'c' && a0 === 'k') { cons = 'k'; consumed = 1; }   // ck -> k
+      const nv = (ahead[consumed] || '').toLowerCase();
+      if (cons === 'n' && !V.includes(nv)) return { key: 'n', consumed }; // ん before a consonant/end
+      let vowel;
+      if (V.includes(nv)) { vowel = nv; consumed += 1; }
+      else vowel = (cons === 't' || cons === 'd') ? 'o' : 'u';          // epenthetic (build -> bi-ru-do)
+      const key = this._cvKey(cons, vowel);
+      return key ? { key, consumed } : null;
+    }
+
+    // Resolve a consonant+vowel to an actual clip key, applying Japanese phonotactics + bank fallbacks.
+    _cvKey(cons, v) {
+      if (!cons) return 'aiueo'.includes(v) ? v : null;
+      if (cons === 'sh') return pickRow(['sha', 'shu', 'sho', 'shi', 'she'], v, 'shu');
+      if (cons === 'ch') return pickRow(['cha', 'chu', 'cho', 'chi', 'che'], v, 'chu');
+      if (cons === 'j') return pickRow(['ja', 'ju', 'jo', 'ji', 'je'], v, 'ju');
+      const row = ({ l: 'r', v: 'b', q: 'k', x: 'k', f: 'h', c: (v === 'e' || v === 'i') ? 's' : 'k' })[cons] || cons;
+      let key = row + v;
+      const fix = { si: 'shi', ti: 'chi', tu: 'tsu', hu: 'fu', zi: 'ji', di: 'ji', du: 'zu', yi: 'i', ye: 'e', wu: 'u', wi: 'wo', we: 'wo' };
+      if (fix[key]) key = fix[key];
+      if (inSet(key)) return key;
+      for (const fb of [row + 'u', row + 'a', v]) if (inSet(fb)) return fb;   // graceful nearest
+      return null;
+    }
+
+    // Voice one typed character when "syllables" style is on. Plays the kana's mora (consuming a small
+    // ゃ/ゅ/ょ for yōon, extending a long-vowel ー, gapping on a small っ); otherwise reads a Latin letter
+    // as katakana-English. Returns how many FOLLOWING chars it already voiced (so the stepper skips them).
+    // Anything it can't map (kanji, digits, symbols) falls back to the throttled synth blip.
+    _voiceChar(ch, ahead, i) {
+      if (this._voiceOff()) return 0;
+      if (this._moraOn()) {
         this._ensureMoraPreload();
-        if (ch === 'っ' || ch === 'ッ') return false;                 // geminate: brief silent gap
-        if (ch === 'ー' || ch === '〜' || ch === '～') {              // long vowel: re-voice the last vowel
-          if (this._lastVowel) this._playMora(this._lastVowel);
-          return false;
-        }
+        if (ch === 'っ' || ch === 'ッ') return 0;                       // geminate: brief silent gap
+        if (ch === 'ー' || ch === '〜' || ch === '～') { if (this._lastVowel) this._playMora(this._lastVowel); return 0; }
         const h = toHira(ch);
-        const hn = next ? toHira(next) : '';
-        if (hn && SMALL_Y.includes(hn)) {                             // base + small y → one mora
-          const k2 = KANA2[h + hn];
-          if (k2) { this._playMora(k2); this._lastVowel = vowelOf(k2); return true; }
+        const hn = ahead[0] ? toHira(ahead[0]) : '';
+        if (hn && SMALL_Y.includes(hn) && KANA2[h + hn]) {              // base + small y → one mora
+          const k2 = KANA2[h + hn]; this._playMora(k2); this._lastVowel = vowelOf(k2); return 1;
         }
-        const k1 = KANA1[h];
-        if (k1) { this._playMora(k1); this._lastVowel = vowelOf(k1); return false; }
-        // not a kana we voice → fall through to the synth blip below
+        if (KANA1[h]) { const k1 = KANA1[h]; this._playMora(k1); this._lastVowel = vowelOf(k1); return 0; }
+        if (/[a-zA-Z]/.test(ch)) {                                      // English → katakana
+          const r = this._latinMora(ch, ahead);
+          if (r && r.key) { this._playMora(r.key); this._lastVowel = vowelOf(r.key) || this._lastVowel; return r.consumed; }
+        }
+        // unmapped (kanji/symbol) → fall through to a synth blip
       }
-      if (i % 2 === 0) this._blip(ch);          // synth animalese (English, or JP kanji/Latin)
-      return false;
+      if (i % 2 === 0) this._blip(ch);
+      return 0;
     }
 
-    // Play a mora clip into every active context (default + optional OBS capture), at the drift pitch.
-    // Fetch+decode are cached per key/context after first use; ties into the 'rollBlipVol' slider.
+    // Play a mora clip into every active context (default + optional OBS capture). Monophonic per
+    // context: the previous mora is quickly ducked + stopped so fast typing doesn't pile clips into
+    // mush. Fetch+decode are cached per key/context; level ties to the 'rollBlipVol' slider.
     async _playMora(key) {
       if (this._voiceOff()) return;
-      const rate = this._driftRate();           // computed up front (before any await) so order holds
-      const gain = Math.max(0.0002, this._blipVol() * 0.55);
+      const rate = this._moraRate();            // computed up front (before any await) so order holds
+      const gain = Math.max(0.0002, this._blipVol() * 0.5);
       let bytes = this._moraBytes[key];
       if (!bytes) {
         try { bytes = await (await fetch(`${this.base}roll/mora/${key}.wav`)).arrayBuffer(); this._moraBytes[key] = bytes; }
@@ -331,7 +418,50 @@
           if (ctx.state === 'suspended') ctx.resume();
           let buf = bufs.get(ctx);
           if (!buf) { buf = await ctx.decodeAudioData(bytes.slice(0)); bufs.set(ctx, buf); }
+          const t = ctx.currentTime;
+          const prev = this._moraNode.get(ctx);                 // duck the previous syllable, don't stack
+          if (prev) { try { prev.gain.gain.cancelScheduledValues(t); prev.gain.gain.setTargetAtTime(0.0001, t, 0.03); prev.src.stop(t + 0.13); } catch (_) {} }
           const src = ctx.createBufferSource(); src.buffer = buf; src.playbackRate.value = rate;
+          const g = ctx.createGain(); g.gain.value = gain;
+          src.connect(g).connect(ctx.destination); src.start();
+          this._moraNode.set(ctx, { src, gain: g });
+        } catch (_) { /* this sink failed — skip it */ }
+      }
+    }
+
+    // AC reaction-sound volume (own slider, like clips/blips). Stored as rollSfxVol 0..1, default 0.45.
+    _sfxVol() {
+      let v = 0.45;
+      try { const s = localStorage.getItem('rollSfxVol'); if (s != null && s !== '') v = parseFloat(s); } catch (_) {}
+      return isNaN(v) ? 0.45 : Math.max(0, Math.min(1, v));
+    }
+
+    // Play an Animal Crossing reaction sound by key (or by an emotion name, which maps to one). Optional
+    // rate (e.g. [sfx=laughter:1.4]) plays it faster/slower for emphasis. Shares the master voice on/off,
+    // uses its own volume, and is lightly throttled so a flurry of emote spans can't machine-gun it.
+    async _playSfx(name, rate) {
+      if (!name || this._voiceOff()) return;
+      const key = SFX_SET.has(name) ? name : EMOTE_SFX[name];     // accept a reaction key OR an emotion
+      if (!key || !SFX_SET.has(key)) return;
+      const t = now();
+      if (this._lastSfxAt && t - this._lastSfxAt < 320) return;   // don't stack reactions on top of each other
+      this._lastSfxAt = t;
+      const r = Math.max(0.5, Math.min(2.5, rate || 1));
+      const gain = Math.max(0.0002, this._sfxVol() * 0.7);
+      let bytes = this._sfxBytes[key];
+      if (!bytes) {
+        try { bytes = await (await fetch(`${this.base}roll/sfx/${key}.mp3`)).arrayBuffer(); this._sfxBytes[key] = bytes; }
+        catch (_) { return; }
+      }
+      let bufs = this._sfxBufs.get(key);
+      if (!bufs) { bufs = new Map(); this._sfxBufs.set(key, bufs); }
+      for (const ctx of [this._audio, this._cap]) {
+        if (!ctx) continue;
+        try {
+          if (ctx.state === 'suspended') ctx.resume();
+          let buf = bufs.get(ctx);
+          if (!buf) { buf = await ctx.decodeAudioData(bytes.slice(0)); bufs.set(ctx, buf); }
+          const src = ctx.createBufferSource(); src.buffer = buf; src.playbackRate.value = r;
           const g = ctx.createGain(); g.gain.value = gain;
           src.connect(g).connect(ctx.destination); src.start();
         } catch (_) { /* this sink failed — skip it */ }
@@ -615,7 +745,7 @@
       this._clear();
       this._stopThinking();
       this.talking = true;
-      this._voiceSkip = false; this._moraPos = 0; this._lastVowel = '';   // fresh phrase intonation
+      this._voiceSkip = 0; this._moraPos = 0; this._lastVowel = '';   // fresh phrase intonation
       // fires as the line ACTUALLY starts typing (not when it was queued) so a caller can
       // sync UI — e.g. the colored "which tab" header — to the message on screen.
       if (this.onStart) { try { this.onStart(state); } catch (_) {} }
@@ -640,12 +770,14 @@
         const a = attrs[i];
         const ch = wrapped[i] != null ? wrapped[i] : a.ch;
 
+        if (a.sfx) this._playSfx(a.sfx, a.sfxRate);    // explicit [sfx=name(:rate)] reaction
+
         const emote = a.emote || baseEmote;
         if (emote !== emoteNow) {
           emoteNow = emote;
           span = null;                                   // force a fresh span across an emote boundary
           if (this._emoteHoldTimer) { clearTimeout(this._emoteHoldTimer); this._emoteHoldTimer = null; }
-          if (emote) { this._neutralTalk = false; this.play(emote); this._emoteStart = now(); }
+          if (emote) { this._neutralTalk = false; this.play(emote); this._emoteStart = now(); this._playSfx(EMOTE_SFX[emote]); }
           else {
             // Back to neutral talk — but keep the emote face up until MIN_EMOTE_MS has elapsed so a
             // short span is visible. Text keeps typing underneath; only the FACE switch is deferred.
@@ -676,8 +808,8 @@
         this.msgEl.scrollTop = this.msgEl.scrollHeight;
 
         if (ch.trim()) {                                              // her voice, per character
-          if (this._voiceSkip) this._voiceSkip = false;               // small kana already spoken via yōon
-          else if (this._voiceChar(ch, wrapped[i + 1] != null ? wrapped[i + 1] : null, i)) this._voiceSkip = true;
+          if (this._voiceSkip > 0) this._voiceSkip -= 1;              // already voiced by a multi-char mora
+          else this._voiceSkip = this._voiceChar(ch, wrapped.slice(i + 1, i + 3), i) | 0;
         }
         if (this._neutralTalk && i % 2 === 0) this._mouthForChar(ch); // mouth on twos
         if (isSentenceEnd(ch)) this._moraPos = 0;                     // restart the JP pitch downdrift

@@ -138,8 +138,15 @@
             <option value="off">off</option>
           </select>
         </label>
+        <label class="fx-row"><span>Style</span>
+          <select id="roll-voice-style" class="btn" title="Spoken syllables (English read as katakana) or the synth blips">
+            <option value="mora">Syllables</option>
+            <option value="blips">Blips</option>
+          </select>
+        </label>
         <label class="fx-row"><span>Clips</span><input id="voice-vol" type="range" min="0" max="100" title="Volume of Roll's recorded voice clips" /></label>
         <label class="fx-row"><span>Blips</span><input id="blip-vol" type="range" min="0" max="100" title="Volume of Roll's animalese typing blips" /></label>
+        <label class="fx-row"><span>Reacts</span><input id="sfx-vol" type="range" min="0" max="100" title="Volume of Roll's Animal Crossing reaction sounds" /></label>
         <div class="roll-section-label">SPEECH</div>
         <label class="fx-row"><span>Speed</span><input id="roll-speed" type="range" min="0" max="100" title="How fast Roll types out what she says" /></label>
         <div class="roll-section-label">LANGUAGE</div>
@@ -149,6 +156,8 @@
             <option value="ja">日本語</option>
           </select>
         </label>
+        <div class="roll-section-label">REPLIES</div>
+        <label class="fx-row"><span>Length</span><input id="roll-verbosity" type="range" min="0" max="100" title="How long Roll's replies are — left = short, right = long (also sizes her token budget)" /></label>
       </div>
     </div>
   </div>

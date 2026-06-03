@@ -13,7 +13,7 @@ Idempotent: skips clips that already exist unless --force.
 import os, sys, subprocess, tempfile, shutil
 
 VOICE = "Kyoko"
-PITCH = 1.35                      # tape-style pitch-up (speeds + brightens, like Animal Crossing)
+PITCH = 1.55                      # tape-style pitch-up: bright, higher feminine register
 SR = 44100
 OUT = os.path.join(os.path.dirname(__file__), "..", "assets", "roll", "mora")
 
@@ -51,15 +51,22 @@ MORA = {
 
 def trimmed_pitch_filter():
     rate = int(round(SR * PITCH))
-    # normalize input rate -> pitch up (asetrate relabels, aresample restores) -> trim head, then
-    # reverse + trim head again (= trim tail) + reverse back -> loudness-normalize.
+    # normalize rate -> pitch up (asetrate relabels, aresample restores) -> trim head, reverse +
+    # trim head again (= trim tail) + reverse back -> lowpass to round off the harsh/sibilant edge
+    # (cuter, less "gremlin") -> short fade in/out so the syllable can't click -> gentle normalize.
+    fade = (
+        "afade=t=in:st=0:d=0.009,"                # soft attack
+        "areverse,afade=t=in:st=0:d=0.022,areverse"  # soft release (fade the reversed head = the tail)
+    )
     return (
         f"aresample={SR},asetrate={rate},aresample={SR},"
         "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.004:detection=peak,"
         "areverse,"
         "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.004:detection=peak,"
         "areverse,"
-        "dynaudnorm=p=0.9:m=8"
+        "lowpass=f=4300,"                         # round off the shrill/sibilant top so high != harsh
+        f"{fade},"
+        "dynaudnorm=p=0.65:m=5:g=15"              # gentle, no pumping
     )
 
 

@@ -330,10 +330,13 @@ function sanitizeSettings(s) {
   const num = (v) => { const n = Number(v); return isNaN(n) ? undefined : Math.max(0, Math.min(100, Math.round(n))); };
   if (oneOf(s.language, ['en', 'ja'])) out.language = s.language;
   if (oneOf(s.voice, ['on', 'off'])) out.voice = s.voice;
+  if (oneOf(s.voiceStyle, ['mora', 'blips'])) out.voiceStyle = s.voiceStyle;
   if (num(s.clipVolume) != null) out.clipVolume = num(s.clipVolume);
   if (num(s.blipVolume) != null) out.blipVolume = num(s.blipVolume);
+  if (num(s.sfxVolume) != null) out.sfxVolume = num(s.sfxVolume);
   if (oneOf(String(s.textSpeed).toLowerCase(), ['slow', 'normal', 'fast'])) out.textSpeed = String(s.textSpeed).toLowerCase();
-  if (oneOf(s.brain, ['off', 'cli', 'api'])) out.brain = s.brain;
+  if (num(s.verbosity) != null) out.verbosity = num(s.verbosity);   // reply length 0..100 (token budget derives from it)
+  if (oneOf(s.brain, ['off', 'cli', 'api', 'free'])) out.brain = s.brain;
   if (oneOf(s.crt, ['on', 'off'])) out.crt = s.crt;
   return Object.keys(out).length ? out : undefined;
 }
@@ -346,7 +349,7 @@ function parseRoll(text, fallback) {
     if (!parsed.line) return null;
     return {
       expression: ROLL_EXPRESSIONS.includes(parsed.expression) ? parsed.expression : fallback.expression,
-      line: String(parsed.line).slice(0, 400),
+      line: String(parsed.line).slice(0, 8000),    // safety net only — real length is set by the token budget + verbosity
       title: parsed.title ? String(parsed.title).replace(/\s+/g, ' ').slice(0, 40) : undefined,
       remember: parsed.remember ? String(parsed.remember).slice(0, 200) : undefined,
       settings: sanitizeSettings(parsed.settings),  // changes the user asked Roll to make to herself
@@ -354,10 +357,22 @@ function parseRoll(text, fallback) {
   } catch (_) { return null; }
 }
 
+// User-set reply length preference (the ⚙ Verbosity slider, 0..100). Prompt-level so it steers both
+// the CLI and API brains; overrides the baseline "a sentence or two" for direct chat.
+function verbosityDirective(v) {
+  const n = (v == null || isNaN(v)) ? 30 : Math.max(0, Math.min(100, v));
+  if (n < 18) return 'Answer in ONE short line (~8 words), no preamble.';
+  if (n < 42) return 'Keep it to one or two sentences.';
+  if (n < 68) return 'A few sentences when it helps — stay tight, no rambling.';
+  if (n < 88) return 'Be chatty: several sentences with color and detail when it fits.';
+  return 'Go as long as the request needs — full multi-paragraph answers, and a real short story when asked. Never cut yourself off.';
+}
+
 const userPrompt = (event) =>
   event && event.kind === 'chat'
     ? `The user is talking to you directly. They said: ${JSON.stringify(event.message || '')}. `
-      + `Reply to them in character. IMPORTANT: if they are trying to ORDER or ask YOU to actually carry out a task `
+      + `Reply to them in character. Length: ${verbosityDirective(event.verbosity)} `
+      + `IMPORTANT: if they are trying to ORDER or ask YOU to actually carry out a task `
       + `or action for them — do / make / fix / build / run / organize / clean / research / set up something — notice they did `
       + `NOT prefix it with "!". In that case do NOT pretend to do it or claim you will; instead, warmly and wittily tell them `
       + `that to have you actually roll up your sleeves and do it yourself, they need to put a "!" in front, e.g. "!organize my downloads". `
@@ -367,8 +382,10 @@ const userPrompt = (event) =>
       + `YOU CAN CHANGE YOUR OWN SETTINGS when (and ONLY when) the user asks you to adjust something about yourself — `
       + `your language, your voice, how loud you are, how fast you talk, your brain, or the CRT effect on your face. When `
       + `they do, add a "settings" object containing ONLY the keys they asked to change, and confirm warmly in "line". Keys: `
-      + `"language":"en"|"ja"; "voice":"on"|"off" (off / "be quiet" / "hush" = you go silent); "clipVolume":0-100; `
-      + `"blipVolume":0-100; "textSpeed":"slow"|"normal"|"fast"; "brain":"off"|"cli"|"api"; "crt":"on"|"off". `
+      + `"language":"en"|"ja"; "voice":"on"|"off" (off / "be quiet" / "hush" = you go silent); `
+      + `"voiceStyle":"mora"|"blips" (mora = spoken syllables, English read as katakana; blips = synth chirps); "clipVolume":0-100; `
+      + `"blipVolume":0-100; "sfxVolume":0-100 (your reaction sounds); "textSpeed":"slow"|"normal"|"fast"; `
+      + `"verbosity":0-100 (reply length, 0=short … 100=long); "brain":"off"|"cli"|"free"|"api"; "crt":"on"|"off". `
       + `If they switch your language, WRITE your confirming "line" in the NEW language. Omit "settings" entirely for any `
       + `message that is not asking you to change a setting. Reply ONLY as JSON {"expression":..,"line":..,"settings"?:..}.`
     : event && event.kind === 'task_start'
@@ -415,7 +432,7 @@ async function viaApi(event, fallback) {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5', max_tokens: 320, system: brainSystem(event),
+        model: 'claude-haiku-4-5', max_tokens: Math.max(128, Math.min(2048, event.maxTokens || 512)), system: brainSystem(event),
         messages: [{ role: 'user', content: userPrompt(event) }],
       }),
     });
@@ -425,13 +442,42 @@ async function viaApi(event, fallback) {
   } catch (_) { return null; }
 }
 
-// brain: 'off' (scripted) | 'cli' (subscription) | 'api' (Haiku key)
+// Roll's free brain: Google Gemini Flash via its free tier (needs a free GEMINI_API_KEY). Thinking is
+// disabled so the short-token budget goes to her actual reply, and JSON mode keeps parseRoll happy.
+async function viaGemini(event, fallback) {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return null;
+  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      method: 'POST',
+      headers: { 'x-goog-api-key': key, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: brainSystem(event) }] },
+        contents: [{ role: 'user', parts: [{ text: userPrompt(event) }] }],
+        generationConfig: {
+          maxOutputTokens: Math.max(128, Math.min(2048, event.maxTokens || 512)),
+          temperature: 1,
+          responseMimeType: 'application/json',
+          thinkingConfig: { thinkingBudget: 0 },   // no internal thinking — keep replies snappy + cheap
+        },
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const text = (((data.candidates || [])[0] || {}).content || {}).parts;
+    return parseRoll((text || []).map((p) => p.text || '').join(''), fallback);
+  } catch (_) { return null; }
+}
+
+// brain: 'off' (scripted) | 'cli' (subscription) | 'free' (Gemini key) | 'api' (Haiku key)
 async function callRoll(event) {
   const scripted = scriptedFor(event.lang);
   const fallback = (scripted[event.kind] || ((c) => ({ expression: 'neutral', line: `${c.project || 'something'} is happening` })))(event);
   const brain = event.brain || 'cli';
   let result = fallback;
   if (brain === 'cli' && claudeBin) result = (await viaCli(event, fallback)) || fallback;
+  else if (brain === 'free') result = (await viaGemini(event, fallback)) || fallback;
   else if (brain === 'api') result = (await viaApi(event, fallback)) || fallback;
   if (result && result.remember) appendNote(result.remember);   // she writes to her own memory
   return result;
@@ -690,10 +736,37 @@ function langDirective(lang) {
   ].join(' ');
   return ''; // English is the default voice; no directive needed
 }
+// Her Animal Crossing reaction sounds + their measured lengths (assets/roll/sfx/manifest.json), so
+// she can pick one and shape an emote/pause to cover its duration. Read once, then cached.
+let _sfxManifest;
+function sfxManifest() {
+  if (_sfxManifest) return _sfxManifest;
+  try { _sfxManifest = JSON.parse(fs.readFileSync(path.join(__dirname, 'assets', 'roll', 'sfx', 'manifest.json'), 'utf8')); }
+  catch (_) { _sfxManifest = {}; }
+  return _sfxManifest;
+}
+function sfxDirective() {
+  const m = sfxManifest();
+  const names = Object.keys(m).sort();
+  if (!names.length) return '';
+  const list = names.map((n) => `${n} (${m[n]}ms)`).join(', ');
+  return [
+    '=== REACTION SOUNDS + PAUSES (extra performance tools) ===',
+    'Fire an Animal Crossing reaction sound mid-line with [sfx=NAME], optionally at a speed for emphasis:',
+    '[sfx=NAME:RATE] with RATE 0.5–2.5 (e.g. [sfx=laughter:1.3]). Your emotion tags ALSO auto-play a matching',
+    'sound, so reach for an explicit [sfx=…] only for a reaction with no emotion tag, or to stack/repeat one.',
+    'Hold a beat with [pause=MS] (e.g. [pause=1200]); your face keeps emoting through it. Available sounds and',
+    'their lengths (ms): ' + list + '.',
+    'When you emote DURING a sound, size it to the sound: keep that emotion span and any [pause=…] running for',
+    'roughly the sound\'s length so face and audio land together instead of snapping back early. Use them',
+    'sparingly and deliberately — a single well-placed reaction beats one on every line. Tags stay ASCII.',
+  ].join(' ');
+}
 function brainSystem(event) {
   const mem = memoryContext();
   const lang = langDirective(event && event.lang);
-  return ROLL_SYSTEM + (lang ? '\n\n' + lang : '') + (mem ? '\n\n--- MEMORY ---\n' + mem : '');
+  const sfx = sfxDirective();
+  return ROLL_SYSTEM + (lang ? '\n\n' + lang : '') + (sfx ? '\n\n' + sfx : '') + (mem ? '\n\n--- MEMORY ---\n' + mem : '');
 }
 ipcMain.handle('roll-memory', () => ({ notes: readMemory(), log: recentLog(30) }));
 ipcMain.on('roll-memory-clear', () => { try { fs.writeFileSync(memoryPath, ''); fs.writeFileSync(logPath, ''); } catch (_) {} });

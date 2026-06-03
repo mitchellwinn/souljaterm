@@ -1,6 +1,6 @@
 {
   "name": "souljaterm",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "A custom terminal for vibing in Claude Code",
   "author": {
     "name": "mitchellwinn",
@@ -45,6 +45,7 @@
       "assets/roll/frames/**/*",
       "assets/roll/voice/**/*",
       "assets/roll/mora/**/*",
+      "assets/roll/sfx/**/*",
       "assets/shaders/**/*",
       "package.json"
     ],

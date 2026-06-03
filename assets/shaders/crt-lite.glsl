@@ -47,6 +47,7 @@ void main() {
     // shader so it's actually visible THROUGH the overlay (the CSS animated the hidden DOM <img>).
     float poBright = 1.0, poSat = 1.0;
     float po = clamp(POWER_ON, 0.0, 1.0);
+    if (po <= 0.0) { gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; } // tube off: black until she fires on
     if (po < 1.0) {
         float h, sx;                                                   // vertical height, horizontal stretch
         if (po < 0.10)      { h = 0.012;               sx = 1.30;               poBright = 7.0;             poSat = 0.0; }
