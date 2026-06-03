@@ -225,6 +225,49 @@ const SCRIPTED = {
   },
 };
 
+// Japanese counterpart to SCRIPTED (brain off). The embedded project/detail come straight from the
+// tools so they may be English, but Roll's own framing is hers — bright, casual Japanese.
+const SCRIPTED_JA = {
+  session_open: (c) => ({ expression: 'happy', line: `${c.project} を開いたよ！ ここ、見ててあげるね。` }),
+  session_close: (c) => ({ expression: 'neutral', line: `${c.project} を閉じたよ。おつかれさま！` }),
+  attention: (c) => ({ expression: 'surprised', line: `${c.project} があなたを待ってるよ — 見てきて！` }),
+  done: (c) => ({
+    expression: 'happy',
+    line: c.summary
+      ? `${c.project}：${String(c.summary).replace(/\s+/g, ' ').split('. ')[0].slice(0, 100)}`
+      : `${c.project} 完了！${c.did && c.did.length ? '：' + c.did[c.did.length - 1] : ''}`,
+    title: condenseTitle(c.summary || (c.did && c.did.length ? c.did[c.did.length - 1] : '')),
+  }),
+  thinking: (c) => ({ expression: 'talk', line: `${c.project}：${String(c.detail || '').replace(/\s+/g, ' ').slice(0, 90)}` }),
+  insight: (c) => ({ expression: 'talk', line: `${c.project}：${String(c.detail || 'これといってなし').slice(0, 100)}` }),
+  working: (c) => ({ expression: 'talk', line: `${c.project}：${c.detail || 'やってるよ'}` }),
+  error: (c) => ({ expression: 'worried', line: `${c.project} でつまずいちゃった${c.detail ? '：' + c.detail : ''}。` }),
+  reflect: () => ({ expression: 'happy', line: 'けっこう集中してるね、いい感じ！ その調子だよ！' }),
+  chat: () => ({ expression: 'happy', line: 'ここにいるよ！ 頭(ブレイン)を CLI か API にしてくれたら、ちゃんとお話しできるよ。' }),
+  task_start: (c) => {
+    const lines = [
+      'やっと本番だね — まかせて！',
+      'ふふ、その言葉を待ってた。見ててね！',
+      'わたしの出番？ ロボットの本気、見せちゃう。',
+      'まかせて！ ライト博士はわたしを飾りで作ったわけじゃないよ。',
+      'ほうき持ったよ — さっと片付けちゃおう。',
+    ];
+    return { expression: 'happy', line: lines[String(c.prompt || '').length % lines.length] };
+  },
+  prompt: (c) => {
+    const lines = [
+      'お、新しいお仕事だ — さっそくいこう！',
+      'まかせて！ これは楽しそう。',
+      'よーし、腕まくりしてやっちゃうよ。',
+      'いくよ — 新しいプロジェクト、大好き！',
+      'いつでもどうぞ！ うまくやろうね。',
+    ];
+    return { expression: 'happy', line: lines[String(c.prompt || '').length % lines.length], title: condenseTitle(c.prompt) };
+  },
+};
+
+const scriptedFor = (lang) => (lang === 'ja' ? SCRIPTED_JA : SCRIPTED);
+
 // Locate the user's `claude` CLI via their login shell (GUI apps have a thin PATH).
 let claudeBin = null;
 // Find an executable on the user's PATH — via their login shell on unix (GUI apps inherit a thin
@@ -278,6 +321,23 @@ ipcMain.on('open-external', (_e, url) => {
   if (typeof url === 'string' && /^(https?:|x-apple\.systempreferences:)/i.test(url)) shell.openExternal(url);
 });
 
+// Whitelist + coerce the self-settings Roll may return so a stray field can't drive arbitrary UI.
+// The renderer's appliers re-validate too; this just keeps the payload clean and bounded.
+function sanitizeSettings(s) {
+  if (!s || typeof s !== 'object') return undefined;
+  const out = {};
+  const oneOf = (v, set) => (set.includes(v) ? v : undefined);
+  const num = (v) => { const n = Number(v); return isNaN(n) ? undefined : Math.max(0, Math.min(100, Math.round(n))); };
+  if (oneOf(s.language, ['en', 'ja'])) out.language = s.language;
+  if (oneOf(s.voice, ['on', 'off'])) out.voice = s.voice;
+  if (num(s.clipVolume) != null) out.clipVolume = num(s.clipVolume);
+  if (num(s.blipVolume) != null) out.blipVolume = num(s.blipVolume);
+  if (oneOf(String(s.textSpeed).toLowerCase(), ['slow', 'normal', 'fast'])) out.textSpeed = String(s.textSpeed).toLowerCase();
+  if (oneOf(s.brain, ['off', 'cli', 'api'])) out.brain = s.brain;
+  if (oneOf(s.crt, ['on', 'off'])) out.crt = s.crt;
+  return Object.keys(out).length ? out : undefined;
+}
+
 function parseRoll(text, fallback) {
   const m = String(text).match(/\{[\s\S]*\}/);
   if (!m) return null;
@@ -289,6 +349,7 @@ function parseRoll(text, fallback) {
       line: String(parsed.line).slice(0, 400),
       title: parsed.title ? String(parsed.title).replace(/\s+/g, ' ').slice(0, 40) : undefined,
       remember: parsed.remember ? String(parsed.remember).slice(0, 200) : undefined,
+      settings: sanitizeSettings(parsed.settings),  // changes the user asked Roll to make to herself
     };
   } catch (_) { return null; }
 }
@@ -302,7 +363,14 @@ const userPrompt = (event) =>
       + `that to have you actually roll up your sleeves and do it yourself, they need to put a "!" in front, e.g. "!organize my downloads". `
       + `If it's just ordinary conversation, chat back normally. For ordinary chat keep your expression warm and light `
       + `(neutral/happy/laugh/talk); reserve worried/sad/cry/shocked/angry for a GENUINE problem they raise — do not act `
-      + `alarmed at a casual message. Reply ONLY as JSON {"expression":..,"line":..}.`
+      + `alarmed at a casual message. `
+      + `YOU CAN CHANGE YOUR OWN SETTINGS when (and ONLY when) the user asks you to adjust something about yourself — `
+      + `your language, your voice, how loud you are, how fast you talk, your brain, or the CRT effect on your face. When `
+      + `they do, add a "settings" object containing ONLY the keys they asked to change, and confirm warmly in "line". Keys: `
+      + `"language":"en"|"ja"; "voice":"on"|"off" (off / "be quiet" / "hush" = you go silent); "clipVolume":0-100; `
+      + `"blipVolume":0-100; "textSpeed":"slow"|"normal"|"fast"; "brain":"off"|"cli"|"api"; "crt":"on"|"off". `
+      + `If they switch your language, WRITE your confirming "line" in the NEW language. Omit "settings" entirely for any `
+      + `message that is not asking you to change a setting. Reply ONLY as JSON {"expression":..,"line":..,"settings"?:..}.`
     : event && event.kind === 'task_start'
     ? `The user just told you, with a leading "!", to GO DO this task yourself: ${JSON.stringify(event.prompt || '')}. `
       + `You're on it now — working in ${JSON.stringify(event.dir || 'their folder')} with your ${event.model || 'best'} smarts. `
@@ -325,7 +393,7 @@ const userPrompt = (event) =>
 // stdin is /dev/null so `claude -p` doesn't stall 3s waiting for piped input.
 function viaCli(event, fallback) {
   return new Promise((resolve) => {
-    const args = ['-p', userPrompt(event), '--model', 'claude-haiku-4-5', '--append-system-prompt', brainSystem()];
+    const args = ['-p', userPrompt(event), '--model', 'claude-haiku-4-5', '--append-system-prompt', brainSystem(event)];
     // On Windows `claude` is often a .cmd shim, which Node will only launch through a shell.
     // (A very long --append-system-prompt can exceed cmd's line limit and fail; that just falls
     // back to a scripted line, so it degrades gracefully rather than breaking.)
@@ -347,7 +415,7 @@ async function viaApi(event, fallback) {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5', max_tokens: 320, system: brainSystem(),
+        model: 'claude-haiku-4-5', max_tokens: 320, system: brainSystem(event),
         messages: [{ role: 'user', content: userPrompt(event) }],
       }),
     });
@@ -359,7 +427,8 @@ async function viaApi(event, fallback) {
 
 // brain: 'off' (scripted) | 'cli' (subscription) | 'api' (Haiku key)
 async function callRoll(event) {
-  const fallback = (SCRIPTED[event.kind] || ((c) => ({ expression: 'neutral', line: `${c.project || 'something'} is happening` })))(event);
+  const scripted = scriptedFor(event.lang);
+  const fallback = (scripted[event.kind] || ((c) => ({ expression: 'neutral', line: `${c.project || 'something'} is happening` })))(event);
   const brain = event.brain || 'cli';
   let result = fallback;
   if (brain === 'cli' && claudeBin) result = (await viaCli(event, fallback)) || fallback;
@@ -606,9 +675,25 @@ function memoryContext() {
     'The timeline only reflects app activity, NOT when the user actually started their day — do NOT guess how long they have been working or how tired they are, and do NOT comment on fatigue/exhaustion unless they bring it up themselves. You may still react to what they are doing and reinforce good habits. Save anything worth keeping long-term via the "remember" field.',
   ].filter(Boolean).join('\n');
 }
-function brainSystem() {
+// Roll speaks the user's chosen language (set in her ⚙ panel, or by asking her in chat). Japanese
+// is HER voice — bright, warm, casual feminine speech — not a stiff machine translation. The markup
+// and JSON scaffolding stay ASCII so the face engine still parses her emotion spans.
+function langDirective(lang) {
+  if (lang === 'ja') return [
+    '=== LANGUAGE: 日本語 ===',
+    'Speak ENTIRELY in natural Japanese, in YOUR own voice — Roll: bright, warm, cheerful, a little playful,',
+    'casual and friendly (not stiff, not formal-robotic, not keigo-heavy). Write like a lively young girl helping',
+    'around the lab, with natural feminine spoken Japanese and soft sentence-enders (〜ね、〜よ、〜だよ) where they fit.',
+    'EVERYTHING the user reads must be Japanese: the "line" text AND the "title". Write real kana/kanji — never romaji.',
+    'Keep ASCII exactly as-is: the JSON keys, the "expression" value, every BBCode tag ([happy]…[/happy], [b], [i],',
+    '[c=#hex], [shake], [wave], [slow], [fast], [.]), and color names/hex. Translate ONLY the human words between tags.',
+  ].join(' ');
+  return ''; // English is the default voice; no directive needed
+}
+function brainSystem(event) {
   const mem = memoryContext();
-  return ROLL_SYSTEM + (mem ? '\n\n--- MEMORY ---\n' + mem : '');
+  const lang = langDirective(event && event.lang);
+  return ROLL_SYSTEM + (lang ? '\n\n' + lang : '') + (mem ? '\n\n--- MEMORY ---\n' + mem : '');
 }
 ipcMain.handle('roll-memory', () => ({ notes: readMemory(), log: recentLog(30) }));
 ipcMain.on('roll-memory-clear', () => { try { fs.writeFileSync(memoryPath, ''); fs.writeFileSync(logPath, ''); } catch (_) {} });

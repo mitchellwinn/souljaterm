@@ -27,6 +27,9 @@ uniform COMPAT_PRECISION float MASK_WEIGHT;
 uniform COMPAT_PRECISION float GLOW;
 uniform COMPAT_PRECISION float VIGNETTE;
 uniform COMPAT_PRECISION float BRIGHT;
+// Boot warp-in progress, fed by Fx during Roll's "power-on" (1.0 = fully on / no effect). Not a
+// #pragma param — glslp.js injects it as a built-in uniform so it stays out of the CRT slider UI.
+uniform COMPAT_PRECISION float POWER_ON;
 
 // barrel-distort uv around center
 vec2 warp(vec2 uv) {
@@ -39,7 +42,25 @@ vec2 warp(vec2 uv) {
 void main() {
     vec2 uv = warp(vTex);
 
-    // off-screen border from the warp -> black
+    // CRT power-on: tube fires as a bright collapsed scanline, stretches wide, then blooms open
+    // vertically with a flicker before settling. Mirrors the old CSS @keyframes crtOn, but in the
+    // shader so it's actually visible THROUGH the overlay (the CSS animated the hidden DOM <img>).
+    float poBright = 1.0, poSat = 1.0;
+    float po = clamp(POWER_ON, 0.0, 1.0);
+    if (po < 1.0) {
+        float h, sx;                                                   // vertical height, horizontal stretch
+        if (po < 0.10)      { h = 0.012;               sx = 1.30;               poBright = 7.0;             poSat = 0.0; }
+        else if (po < 0.35) { float t = (po-0.10)/0.25; h = mix(0.012,0.05,t);  sx = mix(1.30,1.05,t);     poBright = mix(7.0,4.0,t);  poSat = mix(0.0,0.4,t); }
+        else if (po < 0.60) { float t = (po-0.35)/0.25; h = mix(0.05,1.0,t);    sx = mix(1.05,1.0,t);      poBright = mix(4.0,2.0,t);  poSat = mix(0.4,1.6,t); }
+        else if (po < 0.82) { float t = (po-0.60)/0.22; h = 1.0;                sx = 1.0;                  poBright = mix(0.5,1.6,t);  poSat = mix(1.2,1.0,t); } // flicker
+        else                { float t = (po-0.82)/0.18; h = 1.0;                sx = 1.0;                  poBright = mix(1.6,1.0,t);  poSat = 1.0; }
+        vec2 c = uv - 0.5;
+        c.y /= max(h, 1e-4);       // collapse/expand around center -> off-band falls outside [0,1] = black
+        c.x /= max(sx, 1e-4);      // sx>1 magnifies horizontally = the over-wide stretch, edges clipped
+        uv = c + 0.5;
+    }
+
+    // off-screen border from the warp (or the power-on collapse) -> black
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
         gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
         return;
@@ -53,7 +74,8 @@ void main() {
               + COMPAT_TEXTURE(Texture, uv + vec2(0.0, px.y)).rgb
               + COMPAT_TEXTURE(Texture, uv - vec2(0.0, px.y)).rgb;
     col += glow * 0.25 * GLOW;
-    col *= BRIGHT;
+    col *= BRIGHT * poBright;                                          // power-on flash on top of base brightness
+    if (poSat != 1.0) col = mix(vec3(dot(col, vec3(0.299, 0.587, 0.114))), col, poSat); // bleach during turn-on
 
     // scanlines locked to source rows
     float beam = sin(uv.y * TextureSize.y * 3.14159265);

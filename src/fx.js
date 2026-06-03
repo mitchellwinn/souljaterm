@@ -15,6 +15,16 @@
   const listeners = [];
   let gl = null, canvas = null, chain = null;
   let raf = 0, frame = 0;
+  // CRT power-on ramp: poDur>0 means an animation is in flight; the loop reads currentPowerOn()
+  // each frame so the turn-on stays smooth regardless of paint cadence. poVal holds it otherwise.
+  let poVal = 1, poStart = 0, poDur = 0;
+  const perfNow = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : 0);
+  function currentPowerOn() {
+    if (!poDur) return poVal;
+    const t = (perfNow() - poStart) / poDur;
+    if (t >= 1) { poDur = 0; poVal = 1; return 1; }
+    return t > 0 ? t : 0;
+  }
   const surfaces = {};            // id -> { el, getSource }
   let shaderList = [];            // [{ where, file, name, preset }]
 
@@ -76,6 +86,7 @@
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     frame++;
+    chain.powerOn = currentPowerOn();
 
     const cssH = window.innerHeight;
     const scale = dpr();
@@ -181,6 +192,11 @@
     // Like setParam but transient — drives a uniform live (e.g. WiFi-reactive wobble) without
     // persisting it or overwriting the user's saved value.
     setLiveParam(name, val) { if (chain) chain.setParam(name, val); },
+    // Hold the CRT power-on at a fixed progress (0 = collapsed/dark, 1 = fully on). Used to keep
+    // Roll's face dark behind the shader during the brief pre-warp hold, before powerOn() ramps it.
+    setPowerOn(v) { poDur = 0; poVal = Math.max(0, Math.min(1, v)); },
+    // Play the CRT tube turn-on: ramp POWER_ON 0 -> 1 over durationMs (the loop animates the shader).
+    powerOn(durationMs) { poVal = 0; poStart = perfNow(); poDur = Math.max(1, durationMs || 1100); start(); },
     // Live-edit: recompile the single-pass current preset from edited source text.
     applySource(text) {
       if (!chain) return { ok: false, error: 'no chain' };

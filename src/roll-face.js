@@ -296,11 +296,16 @@
     }
 
     // First-boot flourish: she's hidden for a beat (caller pre-adds .warp-pending), then "appears"
-    // with the clip + a CRT/teleport warp-in, settles, and greets.
+    // with the clip + a CRT/teleport warp-in, settles, and greets. The CSS .warp-in animates the
+    // DOM <img> (seen when the shader is OFF); with the shader ON it paints over that, so we ALSO
+    // drive the turn-on through the shader (Fx.powerOn) — that's the version actually visible there.
     intro(greeting) {
+      const fx = window.Fx;
+      if (fx && fx.setPowerOn) fx.setPowerOn(0); // keep her dark behind the shader until she fires on
       setTimeout(() => {
         this.faceEl.classList.remove('warp-pending');
         this.faceEl.classList.add('warp-in');
+        if (fx && fx.powerOn) fx.powerOn(1100);  // CRT tube turn-on, matched to the .warp-in duration
         this._playClip('appear');
         this.play('idle');
         setTimeout(() => this.faceEl.classList.remove('warp-in'), 1100);

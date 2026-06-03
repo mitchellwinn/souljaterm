@@ -47,6 +47,7 @@ const el = {
   rollModal: document.getElementById('roll-modal'),
   rollClose: document.getElementById('roll-close'),
   rollSpeed: document.getElementById('roll-speed'),
+  rollLang: document.getElementById('roll-lang'),
   sysinfo: document.getElementById('sysinfo'),
   siBatt: document.getElementById('si-batt'),
   siDay: document.getElementById('si-day'),
@@ -344,7 +345,7 @@ window.souljaterm.onExit(({ id }) => {
 /* ---- Roll, the assistant ---- */
 const rollFace = new window.RollFace(el.face, el.msg);
 el.face.classList.add('warp-pending'); // hidden until the boot warp-in (init → rollFace.intro)
-let lastRoll = { expression: 'happy', line: "Hi! I'm Roll. I'll keep an eye on your sessions." };
+let lastRoll = { expression: 'happy', line: "Hi! I'm Roll. I'll keep an eye on your sessions." }; // localized at boot in init()
 
 // The colored "which tab" header above Roll's message. Driven by the face's onStart hook so it
 // flips exactly when the line it belongs to starts typing (Roll queues lines, so the state we
@@ -404,6 +405,86 @@ function renderRoll(state) {
   rollFace.speak(state);
 }
 
+// The language Roll speaks — her brain output AND the scripted micro-narrations below.
+function currentLang() { try { return localStorage.getItem('rollLang') || 'en'; } catch { return 'en'; } }
+// Localized scripted snippets Roll says without her brain (saved X, found N, tab labels, etc.).
+// Brain-ON lines are translated by the model via the language directive; these cover the free path.
+const I18N = {
+  en: {
+    saved: (f) => `saved ${f}`,
+    found: (n) => `found ${n} hit${n === 1 ? '' : 's'}`,
+    noMatches: () => 'no matches',
+    subagent: () => 'spinning up a subagent',
+    needsYou: (p, msg) => `${p} needs you${msg ? ': ' + msg : ''}`,
+    greeting: () => "Hi! I'm Roll. I'll keep an eye on your sessions.",
+    brainOffChat: () => "…my brain's off — flip it to CLI/API and I can really chat.",
+    oops: () => '…that one tripped me up. Try again?',
+  },
+  ja: {
+    saved: (f) => `${f} を保存したよ`,
+    found: (n) => `${n}件 見つけた！`,
+    noMatches: () => 'ヒットなし',
+    subagent: () => 'サブエージェント、起動するね',
+    needsYou: (p, msg) => `${p} があなたを待ってるよ${msg ? '：' + msg : ''}`,
+    greeting: () => 'やっほー！ ロールだよ。セッション、見ててあげるね！',
+    brainOffChat: () => '…いま頭(ブレイン)がオフなんだ。CLI か API にしてくれたら、ちゃんとお話しできるよ！',
+    oops: () => '…うまくいかなかった。もう一回ためしてみて？',
+  },
+};
+function L() { return I18N[currentLang()] || I18N.en; }
+
+// Roll changing her OWN settings on request (her brain returns a whitelisted `settings` object;
+// see main.js userPrompt). Each applier persists the value AND syncs the matching ⚙-panel control
+// so the UI reflects what she just did. Unknown keys/values are ignored.
+const clamp01to100 = (v) => Math.max(0, Math.min(100, Math.round(Number(v))));
+const ROLL_SETTING_APPLIERS = {
+  language(v) { if (v === 'en' || v === 'ja') setRollLang(v); },
+  voice(v) {
+    if (v !== 'on' && v !== 'off') return;
+    try { localStorage.setItem('rollVoice', v); } catch (_) {}
+    if (el.voicePick) el.voicePick.value = v;
+  },
+  clipVolume(v) {
+    if (isNaN(Number(v))) return; const n = clamp01to100(v);
+    try { localStorage.setItem('rollClipVol', String(n / 100)); } catch (_) {}
+    if (el.voiceVol) el.voiceVol.value = n;
+  },
+  blipVolume(v) {
+    if (isNaN(Number(v))) return; const n = clamp01to100(v);
+    try { localStorage.setItem('rollBlipVol', String(n / 100)); } catch (_) {}
+    if (el.blipVol) el.blipVol.value = n;
+  },
+  textSpeed(v) {
+    const ms = { slow: SPEED_MS_MAX, normal: 38, fast: SPEED_MS_MIN }[String(v).toLowerCase()];
+    if (ms == null) return;
+    try { localStorage.setItem('rollTextSpeed', String(ms)); } catch (_) {}
+    if (el.rollSpeed) el.rollSpeed.value = speedToSlider(ms);
+  },
+  brain(v) {
+    if (!['off', 'cli', 'api'].includes(v)) return;
+    try { localStorage.setItem('rollBrain', v); } catch (_) {}
+    if (el.rollBrain) el.rollBrain.value = v;
+  },
+  crt(v) {
+    if (v !== 'on' && v !== 'off') return;
+    if (window.Fx) Fx.setEnabled(v === 'on');   // Fx.onChange(renderFxUI) syncs the on/off selects
+  },
+};
+function applyRollSettings(s) {
+  if (!s || typeof s !== 'object') return;
+  for (const k of Object.keys(s)) { try { ROLL_SETTING_APPLIERS[k] && ROLL_SETTING_APPLIERS[k](s[k]); } catch (_) {} }
+}
+
+function setRollLang(v) {
+  try { localStorage.setItem('rollLang', v); } catch (_) {}
+  if (el.rollLang) el.rollLang.value = v;
+}
+function initRollLang() {
+  if (!el.rollLang) return;
+  el.rollLang.value = currentLang();
+  el.rollLang.addEventListener('change', () => setRollLang(el.rollLang.value));
+}
+
 // brain mode: off (scripted) | cli (subscription) | api (Haiku key)
 function currentBrain() { try { return localStorage.getItem('rollBrain') || 'cli'; } catch { return 'cli'; } }
 function initBrainPicker() {
@@ -430,7 +511,8 @@ async function roll(kind, ctx) {
   if (now - _lastRollAt < ROLL_COOLDOWN_MS) return; // global cooldown on LLM lines
   _lastRollAt = now;
   try {
-    const state = await window.souljaterm.rollSpeak({ kind, ...ctx, brain: currentBrain(), tabCount: tabs.length });
+    const state = await window.souljaterm.rollSpeak({ kind, ...ctx, brain: currentBrain(), lang: currentLang(), tabCount: tabs.length });
+    if (state && state.settings) applyRollSettings(state.settings);    // she can adjust her own settings on request
     if (state && state.line) renderRoll({ ...state, tab: ctx.tab, kind }); // carry tab (header) + kind (clip choice)
   } catch (_) { /* never let Roll break the terminal */ }
 }
@@ -466,14 +548,14 @@ function summarizeResult(name, input, response) {
     }
     case 'Grep': case 'Glob': {
       if (!txt || /no matches|no files|^0\b/i.test(oneline(txt)))
-        return { expr: 'neutral', line: 'no matches', notable: true, llm: false };
+        return { expr: 'neutral', line: L().noMatches(), notable: true, llm: false };
       const n = countLines(txt);
-      return { expr: 'happy', line: `found ${n} hit${n === 1 ? '' : 's'}`, notable: true, llm: true, detail: clip(txt, 400) };
+      return { expr: 'happy', line: L().found(n), notable: true, llm: true, detail: clip(txt, 400) };
     }
     case 'Read':
       return { expr: 'neutral', line: `read ${fileBase(input.file_path)}`, notable: false, llm: true, detail: clip(txt, 400) };
     case 'Edit': case 'Write': case 'MultiEdit': case 'NotebookEdit':
-      return { expr: 'happy', line: `saved ${fileBase(input.file_path || input.notebook_path)}`, notable: true, llm: false };
+      return { expr: 'happy', line: L().saved(fileBase(input.file_path || input.notebook_path)), notable: true, llm: false };
     case 'WebFetch': case 'WebSearch':
       return { expr: 'neutral', line: clip(txt || 'looked it up', 70), notable: true, llm: true, raw: true, detail: clip(txt, 400) };
     case 'Task':
@@ -506,7 +588,7 @@ function narrateClaude(evt) {
     markThinking(tabObj);
     // Results carry Roll's voice now — don't chatter about every tool *starting*.
     // The one "about to" beat worth flagging is spawning a subagent.
-    if (h.tool_name === 'Task' && rollActive()) renderRoll({ expression: 'surprised', line: `${proj}: spinning up a subagent`, tab: evt.tab });
+    if (h.tool_name === 'Task' && rollActive()) renderRoll({ expression: 'surprised', line: `${proj}: ${L().subagent()}`, tab: evt.tab });
   } else if (name === 'PostToolUse') {
     markThinking(tabObj);
     const r = summarizeResult(h.tool_name, h.tool_input, h.tool_response);
@@ -536,7 +618,7 @@ function narrateClaude(evt) {
     const status = tabObj === active ? 'idle' : (isQuestion ? 'question' : 'done');
     setTabStatus(tabObj, status);
     window.souljaterm.rollLog('needs-you', proj, msg);
-    if (rollActive()) renderRoll({ expression: 'surprised', line: `${proj} needs you${msg ? ': ' + msg : ''}`, tab: evt.tab, kind: 'attention' });
+    if (rollActive()) renderRoll({ expression: 'surprised', line: L().needsYou(proj, msg), tab: evt.tab, kind: 'attention' });
   } else if (name === 'Stop' || name === 'SubagentStop') {
     // Main Stop = turn's over: flag done (❗ + chirp) unless you're already watching this tab.
     // SubagentStop = a helper finished but the main turn rolls on, so keep the working badge.
@@ -579,10 +661,11 @@ async function chatToRoll(message) {
   window.souljaterm.rollLog('you', '', m);                          // your side of the conversation (timestamped)
   rollFace.thinking();                                              // looping "Roll is thinking..." until she answers
   try {
-    const state = await window.souljaterm.rollSpeak({ kind: 'chat', message, brain: currentBrain(), tabCount: tabs.length });
+    const state = await window.souljaterm.rollSpeak({ kind: 'chat', message, brain: currentBrain(), lang: currentLang(), tabCount: tabs.length });
+    if (state && state.settings) applyRollSettings(state.settings);   // "speak Japanese" / "be quiet" / etc. — she does it herself
     if (state && state.line) { renderRoll(state); window.souljaterm.rollLog('roll', '', state.line); } // and hers (stops thinking)
-    else rollFace.show({ expression: 'neutral', line: "…my brain's off — flip it to CLI/API and I can really chat." });
-  } catch (_) { rollFace.show({ expression: 'neutral', line: '…that one tripped me up. Try again?' }); }
+    else rollFace.show({ expression: 'neutral', line: L().brainOffChat() });
+  } catch (_) { rollFace.show({ expression: 'neutral', line: L().oops() }); }
 }
 // Roll's own housekeeping notices (e.g. memory compaction) — pushed from main, rendered in character.
 if (window.souljaterm.onRollNote) window.souljaterm.onRollNote((s) => { if (s && s.line && rollActive()) renderRoll(s); });
@@ -593,7 +676,8 @@ if (window.souljaterm.onRollNote) window.souljaterm.onRollNote((s) => { if (s &&
 async function reactToPrompt(project, prompt, tab) {
   if (!rollActive()) return;                         // minimized → no personality reaction (saves a brain call)
   try {
-    const state = await window.souljaterm.rollSpeak({ kind: 'prompt', project, prompt, brain: currentBrain(), tabCount: tabs.length });
+    const state = await window.souljaterm.rollSpeak({ kind: 'prompt', project, prompt, brain: currentBrain(), lang: currentLang(), tabCount: tabs.length });
+    if (state && state.settings) applyRollSettings(state.settings);
     if (state && state.line) renderRoll({ ...state, tab, kind: 'prompt' });
   } catch (_) {}
 }
@@ -944,7 +1028,8 @@ async function launchTask(promptText, opts) {
   window.souljaterm.taskStart({ id, prompt, dir, model, mode: planFirst ? 'plan' : 'run' });
   (async () => {                                  // witty in-character ack (her brain, with scripted fallback)
     try {
-      const ack = await window.souljaterm.rollSpeak({ kind: 'task_start', prompt, dir, model, brain: currentBrain() });
+      const ack = await window.souljaterm.rollSpeak({ kind: 'task_start', prompt, dir, model, brain: currentBrain(), lang: currentLang() });
+      if (ack && ack.settings) applyRollSettings(ack.settings);
       if (ack && ack.line && rollActive()) renderRoll({ ...ack, kind: 'prompt', rollTask: { id, label: clip(prompt, 40) } });
     } catch (_) {}
   })();
@@ -1174,6 +1259,8 @@ function initFx() {
   initBlipVol();
   initTextSpeed();            // baseline typing speed (Roll settings ⚙)
   initRollSettings();         // ⚙ panel: voice on/off + volumes + speed
+  initRollLang();             // ⚙ panel: English / 日本語 (also settable by asking Roll in chat)
+  lastRoll = { expression: 'happy', line: L().greeting() };  // greet in the saved language
   initSysInfo();              // battery / day / clock HUD on the right of the title bar
   initTaskUI();               // Roll's task manager panel (☰ in her header, or "!" in chat)
   initFx();                   // RetroArch CRT shaders over screen surfaces (CRT picker in sidebar foot)
