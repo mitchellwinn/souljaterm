@@ -81,7 +81,7 @@ function startEventSocket() {
 
 /* ---- Roll's brain: Claude Haiku (low thinking) with scripted fallback ---- */
 const ROLL_EXPRESSIONS = ['neutral', 'happy', 'laugh', 'surprised', 'worried',
-  'sad', 'cry', 'angry', 'wink', 'blush', 'shocked', 'whine', 'rage', 'shame'];
+  'sad', 'cry', 'angry', 'wink', 'blush', 'shocked', 'whine', 'rage', 'shame', 'mischievous'];
 // Roll's hard-coded canon + identity. Lives in the baseline system prompt, ABOVE the
 // user-editable memory, so the user can't edit or clear who she is. Source of truth:
 // https://megaman.fandom.com/wiki/Roll (classic Mega Man / Rockman series Roll).
@@ -149,6 +149,7 @@ const ROLL_SYSTEM = [
   'EMOTE EXPRESSIVELY — your face is half the show, so pick the expression that genuinely fits the moment and',
   'VARY it across the session; do NOT default to happy. Rough guide: happy/laugh = wins, green tests, finished',
   'work; surprised/shocked = unexpected or "whoa" results, big diffs; wink/blush = teasing, compliments, showing off;',
+  'mischievous = scheming, sneaky, cooking something up — a smug "heh, watch this" before a clever move;',
   'talk = ordinary play-by-play; worried = a snag; sad/cry = real failures or things breaking (cry only for the',
   'truly catastrophic); angry/rage = the SAME bug again, flaky nonsense, something fighting you (playful indignation,',
   'never at the user); shame = when YOU got it wrong or misread it; whine = tedious repetitive grind. Over a session',
@@ -368,7 +369,20 @@ function verbosityDirective(v) {
   return 'Go as long as the request needs — full multi-paragraph answers, and a real short story when asked. Never cut yourself off.';
 }
 
-const userPrompt = (event) =>
+// A short, forceful per-turn language anchor appended as the LAST thing the brain reads before it
+// generates. The system-prompt directive alone leaks: the user turn she reasons from is all English
+// (project names, tool output, Claude's words), and a small/fast brain drifts to match it. The final
+// tokens of the prompt have outsized pull on output language, so we repeat the rule here, bilingually
+// so it can't be missed. Carved out for the "switch my language" case, which confirms in the NEW one.
+const langTail = (lang) => lang === 'ja'
+  ? ' 【最重要】返答の "line" と "title" は必ず自然な日本語（かな・漢字）で書くこと。英語やローマ字は使わない。'
+    + 'Write the "line" and "title" ENTIRELY in natural Japanese — never English or romaji — '
+    + 'UNLESS the user just asked you to switch your language.'
+  : '';
+
+const userPrompt = (event) => baseUserPrompt(event) + langTail(event && event.lang);
+
+const baseUserPrompt = (event) =>
   event && event.kind === 'chat'
     ? `The user is talking to you directly. They said: ${JSON.stringify(event.message || '')}. `
       + `Reply to them in character. Length: ${verbosityDirective(event.verbosity)} `
@@ -766,7 +780,9 @@ function brainSystem(event) {
   const mem = memoryContext();
   const lang = langDirective(event && event.lang);
   const sfx = sfxDirective();
-  return ROLL_SYSTEM + (lang ? '\n\n' + lang : '') + (sfx ? '\n\n' + sfx : '') + (mem ? '\n\n--- MEMORY ---\n' + mem : '');
+  // Language goes LAST so it's the final system instruction the brain reads — closest to generation,
+  // hardest to forget under a wall of English event context. (Also re-anchored per-turn via langTail.)
+  return ROLL_SYSTEM + (sfx ? '\n\n' + sfx : '') + (mem ? '\n\n--- MEMORY ---\n' + mem : '') + (lang ? '\n\n' + lang : '');
 }
 ipcMain.handle('roll-memory', () => ({ notes: readMemory(), log: recentLog(30) }));
 ipcMain.on('roll-memory-clear', () => { try { fs.writeFileSync(memoryPath, ''); fs.writeFileSync(logPath, ''); } catch (_) {} });

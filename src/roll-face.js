@@ -10,7 +10,7 @@
   // Only genuinely big emotions play a full face animation (and skip lip-sync). Everything else —
   // happy, neutral, worried, sad, etc. — just uses the talking pipeline so she looks like she's
   // actually speaking the words, then settles to rest.
-  const STRONG_EMOTION = { laugh: 1, cry: 1, shocked: 1, surprised: 1, angry: 1, rage: 1 };
+  const STRONG_EMOTION = { laugh: 1, cry: 1, shocked: 1, surprised: 1, angry: 1, rage: 1, mischievous: 1 };
   // An inline emote span ([happy]nice[/happy]) is often only a word or two, which types in ~100ms —
   // too short for the face to register. Hold the emote face at least this long before returning to
   // the neutral talking mouth, so even a subtle one-word emote is actually seen.
@@ -67,9 +67,12 @@
   // Her expression names -> the AC reaction that fits, so the emotion tags she already uses play a sound.
   const EMOTE_SFX = {
     happy: 'delight', laugh: 'laughter', surprised: 'amazed', shocked: 'shocked', worried: 'worry',
-    sad: 'heartbreak', cry: 'distress', angry: 'intense', rage: 'intense', wink: 'mischief',
+    sad: 'heartbreak', cry: 'distress', angry: 'intense', rage: 'intense',
+    wink: 'mischief', mischievous: 'mischief',
     blush: 'bashfulness', shame: 'sheepishness', whine: 'distress',
   };
+  // Both [wink] and [mischievous] fire the 'mischief' sound. [mischievous] is the dedicated 10-frame
+  // grin built for it; [wink] keeps it too as a lighter, quick-tease version.
   // Katakana -> hiragana (same 0x60 offset block) so one table voices both scripts.
   const toHira = (ch) => { const c = ch.charCodeAt(0); return (c >= 0x30A1 && c <= 0x30F6) ? String.fromCharCode(c - 0x60) : ch; };
   const vowelOf = (key) => { const v = key[key.length - 1]; return 'aiueo'.includes(v) ? v : ''; };
@@ -746,6 +749,15 @@
       this._stopThinking();
       this.talking = true;
       this._voiceSkip = 0; this._moraPos = 0; this._lastVowel = '';   // fresh phrase intonation
+      // Hard-reset the face to neutral before the new line types. The PREVIOUS line's emote (or the
+      // strong-emote face _finish settles on) keeps its own animTimer running through the queue gap;
+      // without this, that old animation would keep playing UNDER the new line until its first emote
+      // boundary — looking like an interrupted animation "resuming". Each span re-asserts its own face
+      // at its boundary in step(), so clearing here is safe. _emoteStart=0 also forces the first
+      // return-to-neutral to be immediate instead of measured against the stale emote's start time.
+      this._neutralTalk = true; this._mode = 'talk'; this._emoteStart = 0;
+      if (this.animTimer) { clearInterval(this.animTimer); this.animTimer = null; }
+      this._frame(MOUTH.closed);
       // fires as the line ACTUALLY starts typing (not when it was queued) so a caller can
       // sync UI — e.g. the colored "which tab" header — to the message on screen.
       if (this.onStart) { try { this.onStart(state); } catch (_) {} }

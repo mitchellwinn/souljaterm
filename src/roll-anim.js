@@ -24,10 +24,19 @@ window.ROLL_ANIM = {
   whine:       { frames: ['3_3', '3_4', '3_5'], mode: 'pingpong', fps: 4 },  // grit → shout → cry, complaining
   rage:        { frames: ['3_2', '3_3', '3_4'], mode: 'loop', fps: 7 },      // building fury
   shame:       { frames: ['3_2'], mode: 'hold' },                            // head held low
+  // Dedicated 10-frame scheming grin (its own sheet: mischievous1..10), paired with the 'mischief'
+  // reaction sound. LOOPS so it can never hang on a single frame the way the old [wink]-only mapping
+  // did. Timed by frame repetition at one fps: frames 1-4 snap by fast (1× = ~83ms), 5-9 savor slower
+  // (2× = ~166ms), and the smug punchline 10 holds longest (3×) before it loops.
+  mischievous: { frames: ['mischievous1', 'mischievous2', 'mischievous3', 'mischievous4',
+                          'mischievous5', 'mischievous5', 'mischievous6', 'mischievous6',
+                          'mischievous7', 'mischievous7', 'mischievous8', 'mischievous8',
+                          'mischievous9', 'mischievous9',
+                          'mischievous10', 'mischievous10', 'mischievous10'], mode: 'loop', fps: 12 },
 };
 window.ROLL_EXPRESSIONS = ['neutral', 'happy', 'laugh', 'talk', 'surprised',
   'worried', 'sad', 'cry', 'angry', 'wink', 'blush', 'shocked', 'whine',
-  'rage', 'shame'];
+  'rage', 'shame', 'mischievous'];
 
 // Eyes-only blink overlay (top 20px). It's a separate layer stacked over the mouth, so the SAME
 // blink works whether she's idle or talking — no combined talk+blink frames needed (4-6 unused).
