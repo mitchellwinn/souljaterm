@@ -99,6 +99,9 @@ body.on .boot-hint { display: none; }
 }
 body.on .power { display: none; }
 
+/* CRT shader overlay for Roll's face — same engine + base settings as the app (fx.js). */
+#fx-overlay { position: fixed; inset: 0; z-index: 40; pointer-events: none; display: none; }
+
 /* boot warp-in (same effect as the app) */
 #face { position: relative; }
 #face.warp-pending img { opacity: 0; }
