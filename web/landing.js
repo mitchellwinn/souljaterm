@@ -51,20 +51,9 @@ faceEl.appendChild(powerBtn);
 faceEl.classList.add('warp-pending'); // hidden until she warps in
 
 // CRT shader over Roll's face — the same engine + base settings as the app (fx.js DEFAULT_CONFIG).
-// We feed the shader a fresh-drawn 2D canvas of her current frame rather than the bare <img>: the
-// frame's src swaps every animation tick, and an in-flight <img> would skip-flicker the upload, so
-// keeping a last-good canvas mirrors the app's faceSource() and renders cleanly.
-const faceCanvas = document.createElement('canvas');
-const faceCtx = faceCanvas.getContext('2d');
-function rollFaceSource() {
-  const img = face.img;
-  if (img && img.complete && img.naturalWidth) {
-    if (faceCanvas.width !== img.naturalWidth) { faceCanvas.width = img.naturalWidth; faceCanvas.height = img.naturalHeight; }
-    try { faceCtx.clearRect(0, 0, faceCanvas.width, faceCanvas.height); faceCtx.drawImage(img, 0, 0); } catch (_) {}
-  }
-  return faceCanvas.width ? faceCanvas : img;
-}
-if (window.Fx) Fx.registerSurface('rollface', faceEl, rollFaceSource);
+// faceSource() hands the shader a composited base(mouth) + eyes(blink) canvas each frame, so her
+// blink survives under the WebGL overlay — exactly how the in-app dock feeds it.
+if (window.Fx) Fx.registerSurface('rollface', faceEl, () => face.faceSource());
 
 // --- mobile detection: phones/tablets get a different reception from Roll ---
 const isMobile = !!(navigator.userAgentData && navigator.userAgentData.mobile)
@@ -112,7 +101,12 @@ function powerOn() {
   try { face._cap && face._cap.resume(); } catch (_) {}
   faceEl.classList.remove('warp-pending');
   faceEl.classList.add('warp-in');
-  if (window.Fx) Fx.init();                              // boot the CRT shader over her face (held off until the gate clears)
+  // Boot the CRT shader over her face (held off until the gate clears) and drive the tube turn-on
+  // through the shader — same as the app's intro(): hold dark at 0, then ramp 0→1 over the warp.
+  if (window.Fx) {
+    if (Fx.setPowerOn) Fx.setPowerOn(0);
+    Fx.init().then(() => { if (Fx.powerOn) Fx.powerOn(1100); }).catch(() => {});
+  }
   face.play('idle');
   face._playClip('appear');                              // entrance sound — the click just unlocked it
   setTimeout(() => faceEl.classList.remove('warp-in'), 1100);

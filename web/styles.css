@@ -73,6 +73,16 @@ body {
 .lcd { background: var(--screen); color: var(--lcd); border: 2px solid; border-color: var(--dark) var(--light) var(--light) var(--dark); }
 #face { aspect-ratio: 1/1; width: 100%; display: flex; align-items: center; justify-content: center; overflow: hidden; margin: 6px 0; }
 #face img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+/* Eyes layer: stacked over the mouth/base img and clipped to the top 62.5% (the eye band) so a
+   blink swaps ONLY the eyes — the mouth animating underneath is untouched. Hidden unless blinking. */
+#face .eyes { position: absolute; inset: 0; z-index: 1; display: none; clip-path: inset(0 0 37.5% 0); }
+/* tagged-text effects ([shake]/[wave]) + "thinking" status, matching the app's message box */
+#msg.thinking { color: #ffb02e; text-align: center; }
+#msg .fx-shake { display: inline-block; animation: fxShake .26s steps(2) infinite; }
+@keyframes fxShake { 0% { transform: translate(0,0); } 25% { transform: translate(.6px,-.6px); }
+  50% { transform: translate(-.6px,.5px); } 75% { transform: translate(.5px,.6px); } 100% { transform: translate(0,0); } }
+#msg .fx-wave { display: inline-block; animation: fxWave 1s ease-in-out infinite; }
+@keyframes fxWave { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
 /* fixed (taller) height so her text scrolls inside instead of growing the panel + pushing the page */
 #msg { height: 150px; overflow-y: auto; padding: 9px; font: 12px var(--mono-font);
   line-height: 1.5; color: var(--lcd); white-space: pre-wrap; word-break: break-word; }
