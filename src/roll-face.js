@@ -166,9 +166,12 @@
       this.eyes.alt = '';
       this.eyes.setAttribute('aria-hidden', 'true');
       this.faceEl.replaceChildren(this.img, this.eyes);
-      // Preload the blink eye-frames so the first blink doesn't show a blank/late swap while the
-      // PNG fetches — the browser keeps them cached for the overlay.
-      for (const f of (BLINK.eyes || [])) { const im = new Image(); im.src = `${this.base}roll/frames/${f}.png`; }
+      // Preload + KEEP the blink eye-frames as decoded Images. faceSource() composites the blink from
+      // these (always-complete) cached images rather than the live <img>, whose per-frame .src swap
+      // races completeness — that race dropped eye-frames mid-blink and made the blink glitch/stutter
+      // under the shader (which only shows what faceSource hands it).
+      this._eyeImgs = {};
+      for (const f of (BLINK.eyes || [])) { const im = new Image(); im.src = `${this.base}roll/frames/${f}.png`; this._eyeImgs[f] = im; }
       this.talking = false;
       this.animTimer = null;
       this.blinkAnim = null;
@@ -193,7 +196,7 @@
     }
 
     _frame(f) { this.img.src = `${this.base}roll/frames/${f}.png`; }
-    _eyeFrame(f) { this.eyes.src = `${this.base}roll/frames/${f}.png`; }
+    _eyeFrame(f) { this._curEye = f; this.eyes.src = `${this.base}roll/frames/${f}.png`; }
 
     // The CRT shader paints a WebGL canvas OVER her face rect, so it can only show what it samples —
     // and it samples this ONE source. The base <img> alone drops the blink (the .eyes overlay is a
@@ -211,9 +214,17 @@
       g.clearRect(0, 0, w, hN);
       g.drawImage(base, 0, 0, w, hN);
       const eyes = this.eyes;
-      if (eyes && eyes.style.display !== 'none' && eyes.complete && eyes.naturalWidth) {
-        const cut = Math.round(hN * 0.625);   // matches .eyes clip-path: inset(0 0 37.5% 0)
-        g.drawImage(eyes, 0, 0, w, cut, 0, 0, w, cut);
+      if (eyes && eyes.style.display !== 'none') {
+        // Draw the CURRENT eye-frame from the decoded cache (always complete); fall back to the live
+        // element only on a cache miss. Sampling the live <img> alone dropped frames mid-blink while
+        // its .src swap was still decoding, which read as a glitchy blink under the shader.
+        const cached = this._curEye && this._eyeImgs && this._eyeImgs[this._curEye];
+        const eyeSrc = (cached && cached.complete && cached.naturalWidth) ? cached
+          : (eyes.complete && eyes.naturalWidth ? eyes : null);
+        if (eyeSrc) {
+          const cut = Math.round(hN * 0.625);   // matches .eyes clip-path: inset(0 0 37.5% 0)
+          g.drawImage(eyeSrc, 0, 0, w, cut, 0, 0, w, cut);
+        }
       }
       return c;
     }
