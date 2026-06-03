@@ -84,7 +84,7 @@ const desktopLines = [
   { expression: 'happy',       line: "Hi, I'm Roll! Dr. Light built me to keep house. These days I keep your terminal company instead." },
   { expression: 'talk',        line: "Down there is a real shell running Claude Code, and I live in the corner of it, rooting for you." },
   { expression: 'talk',        line: "Need a hand? Just type \"!do this\" and I'll take the job myself — I route it, run it, and show you every step in a live panel." },
-  { expression: 'wink',        line: "I also ping you the instant Claude needs a human. Basically the supportive little sister your shell never had.", clip: 'mitete' },
+  { expression: 'wink',        line: "I also ping you the instant Claude needs a human, so you're never stuck babysitting a stalled prompt.", clip: 'mitete' },
   { expression: 'happy',       line: `Grab it below${os ? ' for ' + os : ''}. It's free and runs on your own Claude login, no key required.`, clip: 'ikuyo' },
 ];
 
