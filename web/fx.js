@@ -14,6 +14,7 @@
   const LS_KEY = 'fxConfig';
   const listeners = [];
   let gl = null, canvas = null, chain = null;
+  let anchorEl = null;            // when set, the overlay is a child of this element (scrolls with it)
   let raf = 0, frame = 0;
   // CRT power-on ramp: poDur>0 means an animation is in flight; the loop reads currentPowerOn()
   // each frame so the turn-on stays smooth regardless of paint cadence. poVal holds it otherwise.
@@ -63,15 +64,36 @@
     if (canvas) return;
     canvas = document.createElement('canvas');
     canvas.id = 'fx-overlay';
-    document.body.appendChild(canvas);
+    if (anchorEl) { mountAnchored(); } else { document.body.appendChild(canvas); }
     gl = canvas.getContext('webgl2', { alpha: true, premultipliedAlpha: false, antialias: false });
     if (!gl) { console.warn('[fx] WebGL2 unavailable — CRT shader disabled'); return; }
     chain = new window.Glslp.Chain(gl);
   }
 
+  // Anchored mode (the web landing): the canvas is a CHILD of the shaded element, filling it, so it
+  // scrolls WITH the element through normal layout. The old viewport-fixed overlay had to re-read the
+  // face's rect every frame and chase it — during scroll the GL paint lagged the DOM by a frame and
+  // the un-shaded <img> underneath tore through. As a child there's nothing to chase.
+  function mountAnchored() {
+    canvas.style.position = 'absolute';
+    canvas.style.left = '0'; canvas.style.top = '0';
+    canvas.style.width = '100%'; canvas.style.height = '100%';
+    canvas.style.zIndex = '2'; canvas.style.pointerEvents = 'none';
+    anchorEl.appendChild(canvas);
+  }
+
   function dpr() { return window.devicePixelRatio || 1; }
 
   function resizeCanvas() {
+    if (anchorEl) {
+      // Buffer tracks the element's box (px → device px). CSS size is the 100%/100% style, so a
+      // page scroll never resizes anything — only an actual layout change does.
+      const r = anchorEl.getBoundingClientRect();
+      const w = Math.max(1, Math.round(r.width * dpr()));
+      const h = Math.max(1, Math.round(r.height * dpr()));
+      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+      return;
+    }
     const w = Math.round(window.innerWidth * dpr());
     const h = Math.round(window.innerHeight * dpr());
     if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
@@ -92,12 +114,18 @@
     const scale = dpr();
     for (const id in surfaces) {
       const surf = surfaces[id];
+      const src = safe(surf.getSource);
+      if (!src) continue;
+      if (anchorEl) {
+        // The canvas IS the surface — fill it. No rect, nothing to chase, no scroll lag.
+        try { chain.uploadSource(src); chain.render(canvas.width, canvas.height, frame, 0, 0); }
+        catch (e) { /* one bad surface shouldn't kill the loop */ }
+        continue;
+      }
       // el may be an element or a function resolving the current element, so the shaded rect
       // tracks the real content rather than a fixed box.
       const node = typeof surf.el === 'function' ? safe(surf.el) : surf.el;
       if (!node) continue;
-      const src = safe(surf.getSource);
-      if (!src) continue;
       const rect = node.getBoundingClientRect();
       if (rect.width < 2 || rect.height < 2) continue;
 
@@ -171,6 +199,13 @@
       emit();
     },
     registerSurface(id, el, getSource) { surfaces[id] = { el, getSource }; }, // el: Element | () => Element
+    // Web/landing: mount the overlay INSIDE `el` (a child canvas that fills it) instead of a
+    // viewport-fixed full-window overlay, so it scrolls with the element and never lags. Call before
+    // init()/start(). With one surface, the anchored canvas just fills itself with the shaded face.
+    anchorTo(el) {
+      anchorEl = el || null;
+      if (canvas && anchorEl && canvas.parentNode !== anchorEl) mountAnchored();
+    },
     setEnabled(on) {
       cfg.enabled = !!on; saveConfig();
       if (cfg.enabled) start(); else stop();

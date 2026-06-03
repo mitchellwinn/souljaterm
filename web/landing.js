@@ -57,8 +57,15 @@ faceEl.classList.add('warp-pending'); // hidden until she warps in
 
 // CRT shader over Roll's face — the same engine + base settings as the app (fx.js DEFAULT_CONFIG).
 // faceSource() hands the shader a composited base(mouth) + eyes(blink) canvas each frame, so her
-// blink survives under the WebGL overlay — exactly how the in-app dock feeds it.
-if (window.Fx) Fx.registerSurface('rollface', faceEl, () => face.faceSource());
+// blink survives under the WebGL overlay — exactly how the in-app dock feeds it. It returns null for
+// the one frame after a mouth swap (img not decoded yet); we keep the last-good composite so rapid
+// talking never blanks a frame. Anchoring the canvas inside her face box makes it scroll with her
+// instead of a viewport-fixed overlay chasing a moving rect (which tore/glitched during scroll).
+let lastFace = null;
+if (window.Fx) {
+  Fx.registerSurface('rollface', faceEl, () => { const s = face.faceSource(); if (s) lastFace = s; return lastFace; });
+  Fx.anchorTo(faceEl);
+}
 
 // --- mobile detection: phones/tablets get a different reception from Roll ---
 const isMobile = !!(navigator.userAgentData && navigator.userAgentData.mobile)
