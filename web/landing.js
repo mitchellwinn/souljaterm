@@ -42,6 +42,11 @@ document.getElementById('dl-linux').href = RELEASES;
 document.getElementById('dl-src').href = REPO;
 
 // --- Roll, reusing the app's face engine with web-relative assets ---
+// Animalese by default on the web: her spoken-mora voice (the app's JP "animalese") instead of the
+// synth blips, so she actually chatters as she types. Only seeds the default — if a visitor ever
+// picks a style it sticks.
+try { if (localStorage.getItem('rollVoiceStyle') == null) localStorage.setItem('rollVoiceStyle', 'mora'); } catch (_) {}
+
 // RollFace's constructor does faceEl.replaceChildren(img), which would wipe the #power button —
 // so grab it first and re-append it ON TOP of her screen afterward.
 const faceEl = document.getElementById('face');
@@ -66,26 +71,27 @@ if (isMobile) {
   if (hint) hint.textContent = "▸ Tap Roll's screen to power on ↓";
 }
 
-// Her scripted welcome pitch (the queue paces these; clips throttle themselves).
-// Roll is Dr. Light's helper robot from the year 20XX — sweet, optimistic, and squarely
-// in your corner, like the support unit she is for her brother.
+// Her scripted welcome pitch. Lines use the engine's inline markup so she emotes, makes faces, and
+// fires reaction sounds as she types: [happy]…[/happy] (any expression) emotes + sounds during the
+// span; [b]/[i]/[c=#hex] style; [.] is a beat; [sfx=name] fires an extra reaction. The queue paces
+// these; clips/sfx throttle themselves.
 const desktopLines = [
-  { expression: 'happy',       line: "Hi, I'm Roll! Dr. Light built me to keep house. These days I keep your terminal company instead." },
-  { expression: 'talk',        line: "Down there is a real shell running Claude Code, and I live in the corner of it, rooting for you." },
-  { expression: 'talk',        line: "Need a hand? Just type \"!do this\" and I'll take the job myself — I route it, run it, and show you every step in a live panel." },
-  { expression: 'wink',        line: "I also ping you the instant Claude needs a human, so you're never stuck babysitting a stalled prompt.", clip: 'mitete' },
-  { expression: 'happy',       line: `Grab it below${os ? ' for ' + os : ''}. It's free and runs on your own Claude login, no key required.`, clip: 'ikuyo' },
+  { expression: 'happy', line: "[happy]Hi, I'm Roll![/happy] Dr. Light built me to keep house — [.] these days I keep your [b]terminal[/b] company instead." },
+  { expression: 'talk',  line: "Down there is a [b]real shell[/b] running Claude Code, [.] and I live in the corner of it, [happy]rooting for you.[/happy]" },
+  { expression: 'talk',  line: "Need a hand? Just type [b][c=#7aa2f7]!do this[/c][/b] and I'll take the job myself — [.] I route it, run it, and show you [i]every step[/i] in a live panel. [wink]Easy.[/wink]" },
+  { expression: 'wink',  line: "I also [b]ping you[/b] the instant Claude needs a human, [.] so you're never stuck [whine]babysitting a stalled prompt.[/whine]", clip: 'mitete' },
+  { expression: 'happy', line: `Grab it below${os ? ' for ' + os : ''}. [.] It's [b]free[/b] and runs on your own Claude login — [surprised]no key required![/surprised]`, clip: 'ikuyo' },
 ];
 
 // Phone visitors: she's a robot from 20XX, so a pocket supercomputer genuinely impresses her…
 // right before she tells you to go sit at a real machine.
 const mobileLines = [
-  { expression: 'surprised',   line: "Hold on, let me scan your hardware… you're running me on a phone?!", clip: 'kya' },
-  { expression: 'talk',        line: "Astonishing. A whole computer in one hand. I'm from 20XX and even WE thought this was sci-fi." },
-  { expression: 'wink',        line: "Pocket supercomputer, opening a terminal site on the go. Very cute. Very advanced. Dr. Light would faint.", clip: 'mitete' },
-  { expression: 'happy',       line: "But robot to human: souljaterm runs real shells and Claude Code. For actual work, you want a proper computer." },
-  { expression: 'talk',        line: "That's where I really shine — type \"!do this\" and I'll take the job myself, running it as an agent and showing you every step." },
-  { expression: 'wink',        line: "Bookmark me, come back on a desktop. macOS, Windows or Linux. I'll keep your seat warm!", clip: 'makasete' },
+  { expression: 'surprised', line: "Hold on, let me scan your hardware… [shocked]you're running me on a [b]phone[/b]?![/shocked]", clip: 'kya' },
+  { expression: 'talk',      line: "[surprised]Astonishing.[/surprised] A whole computer in one hand — [.] I'm from 20XX and even [i]we[/i] thought this was sci-fi." },
+  { expression: 'wink',      line: "Pocket supercomputer, opening a terminal site on the go? [mischievous]Very cute. Very advanced.[/mischievous] [.] Dr. Light would [blush]faint.[/blush]", clip: 'mitete' },
+  { expression: 'talk',      line: "But robot to human: [b]souljaterm[/b] runs real shells and Claude Code. [.] For actual work, you want a [b]proper computer[/b]." },
+  { expression: 'talk',      line: "That's where I really shine — type [b][c=#7aa2f7]!do this[/c][/b] and I'll take the job myself, [.] running it as an agent and showing you [i]every step[/i]." },
+  { expression: 'wink',      line: "Bookmark me, come back on a desktop. [.] macOS, Windows or Linux — [happy]I'll keep your seat warm![/happy]", clip: 'makasete' },
 ];
 
 const lines = isMobile ? mobileLines : desktopLines;
@@ -116,14 +122,14 @@ powerBtn.addEventListener('click', powerOn); // only Roll's screen powers on
 
 // If they linger, she keeps the energy up.
 const nudges = isMobile ? [
-  { expression: 'wink',        line: "Still thumbing away on the pocket marvel? Adorable. A desktop's ready whenever you're serious.", clip: 'sore' },
-  { expression: 'wink',        line: "Tiny screen, big dreams. Come find me on a real machine and let's actually build something.", clip: 'makasete' },
+  { expression: 'wink', line: "Still thumbing away on the pocket marvel? [mischievous]Adorable.[/mischievous] [.] A desktop's ready whenever you're serious.", clip: 'sore' },
+  { expression: 'wink', line: "Tiny screen, big dreams. [.] Come find me on a [b]real machine[/b] and let's actually [wave]build something.[/wave]", clip: 'makasete' },
 ] : [
-  { expression: 'wink',        line: "Still here? Go on, I'll keep your sessions tidy while you work.", clip: 'sore' },
-  { expression: 'happy',       line: "I run native on macOS, Windows and Linux. Dr. Light made me very portable.", clip: 'makasete' },
+  { expression: 'wink',  line: "[wink]Still here?[/wink] Go on — I'll keep your sessions tidy while you work.", clip: 'sore' },
+  { expression: 'happy', line: "I run native on macOS, Windows and Linux. [happy]Dr. Light made me very portable.[/happy]", clip: 'makasete' },
 ];
 let n = 0;
 setInterval(() => { if (warped) { face.speak(nudges[n % nudges.length]); n++; } }, 40000); // only once powered on
 
 // A click on download earns a cheer.
-primary.addEventListener('click', () => face.speak({ expression: 'laugh', line: "Yes!! See you in the terminal!", clip: 'yattane' }));
+primary.addEventListener('click', () => face.speak({ expression: 'laugh', line: "[laugh]Yes!! See you in the terminal![/laugh]", clip: 'yattane' }));
