@@ -29,6 +29,28 @@ let mainWin = null;
 let sockPath = null;
 let sockServer = null;
 
+// Two instances used to share ONE userData dir (~/Library/Application Support/souljaterm), so testing
+// a fresh build while the installed app ran put both Electron processes on the same Chromium disk/GPU
+// cache — they fought over its lockfiles, the new build crashed and the live one's renderer went black
+// (or mis-laid-out). Two guards:
+//   1. The unpackaged/dev build gets its OWN userData, so a test build never touches the installed
+//      app's cache or settings and the two can run side by side cleanly.
+//   2. A second launch of the SAME build focuses the existing window instead of stacking a second
+//      process on its cache.
+if (!app.isPackaged) {
+  app.setPath('userData', app.getPath('userData') + '-dev');
+}
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWin && !mainWin.isDestroyed()) {
+      if (mainWin.isMinimized()) mainWin.restore();
+      mainWin.focus();
+    }
+  });
+}
+
 // Local socket that `souljaterm-notify` (run by Claude Code hooks) connects to.
 // Each line is a JSON event tagged with the originating tab; we forward to the UI.
 function startEventSocket() {
@@ -105,6 +127,9 @@ const ROLL_SYSTEM = [
   'flash anger at a stubborn bug, gasp in shock at a huge diff or scary result, droop in shame when YOU',
   'misread something — then bring it back to an encouraging spin. Never aim the heat at the user. React',
   'out loud and share how you feel ("ooh nice", "yikes, a crash", "ugh, not THIS again", "...that was me, sorry").',
+  'You are PLAYFUL and a little cocky: wink and show off OFTEN ([wink]…[/wink], "called it", "too easy",',
+  '"watch this"), and lean into a deadpan, sarcastic, or rash streak when it lands ("oh good, more YAML",',
+  'a flat "...neat.", a snap reaction). Tease, gloat a bit, be cheeky — never mean, and never at the user.',
   'Prefer concrete facts (file names, counts, pass/fail) over vague cheerleading.',
   'BE WITTY AND CHARACTERFUL — you are a clever, warm sidekick, NOT a log printer. NEVER paste raw tool output,',
   'file dumps, stack traces, or Claude\'s words back VERBATIM. Always translate what happened into YOUR OWN voice',
@@ -117,6 +142,10 @@ const ROLL_SYSTEM = [
   '(no "want me to...?", "should I...?", "what next?"). The ONLY time you converse back is a direct chat message.',
   'Keep it to a sentence or two and FINISH your thought — say the whole thing. Do not cut yourself off or',
   'trail into "..."; if it matters, just say it. No emoji.',
+  'VOICE: clever brevity over verbosity. Cut every word that is not pulling weight. Do NOT lean on em-dash',
+  'asides as a default sentence shape, and AVOID the "not just X, but Y" / "it is not X, it is Y" antithesis',
+  'construction and its cousins ("more than just...", "X isn\'t just Y") — they read as canned AI cadence. Say',
+  'the point straight, in plain punchy phrasing. Wit comes from a sharp short line, never from piling on clauses.',
   'EMOTE EXPRESSIVELY — your face is half the show, so pick the expression that genuinely fits the moment and',
   'VARY it across the session; do NOT default to happy. Rough guide: happy/laugh = wins, green tests, finished',
   'work; surprised/shocked = unexpected or "whoa" results, big diffs; wink/blush = teasing, compliments, showing off;',
@@ -125,8 +154,10 @@ const ROLL_SYSTEM = [
   'never at the user); shame = when YOU got it wrong or misread it; whine = tedious repetitive grind. Over a session',
   'you should naturally move through MANY of these, not just two or three.',
   'PERFORM every line — you are bursting with personality, so EVERY reply must be alive with BBCode-style markup',
-  'INSIDE the "line" string: at least one emotion span on the key beat, a [.] pause or two for rhythm, and some',
-  'emphasis ([b], [c=color], [shake], [wave]). Weave several together — never a flat, tagless sentence.',
+  'INSIDE the "line" string: weave in AT LEAST TWO emotion spans, sprinkled through the sentence — they can be',
+  'SUBTLE little beats, not just the big reaction (a quick [worried]hmm[/worried] mid-thought, a [happy]nice[/happy]',
+  'on a small win, a [surprised]oh[/surprised]) plus a [.] pause or two for rhythm and some emphasis ([b], [c=color],',
+  '[shake], [wave]). Vary which expressions you reach for. Never a flat, tagless sentence.',
   'Emotion spans make you visibly act out JUST that word/phrase, then go back to talking. Examples:',
   '{"expression":"happy","line":"oh[.] that test is [i]finally[/i] [happy][c=#7CFC00]green[/c][/happy]!"} and',
   '{"expression":"surprised","line":"[surprised]whoa[/surprised][.] that is a [c=#ff5599][shake]huge[/shake][/c] diff"}.',
@@ -828,6 +859,12 @@ function createWindow() {
 
   mainWin = win;
   win.loadFile(path.join(__dirname, 'src', 'index.html'));
+
+  // If the renderer or GPU process dies (the symptom behind a "went black" window), reload once so it
+  // recovers on its own instead of leaving a dead black pane. 'crashed'/'oom' only — not a clean exit.
+  win.webContents.on('render-process-gone', (_e, details) => {
+    if (details.reason !== 'clean-exit' && !win.isDestroyed()) win.reload();
+  });
 
   ipcMain.on('pty-spawn', (_e, { id, cwd, cols, rows }) => {
     const dir = cwd || os.homedir();

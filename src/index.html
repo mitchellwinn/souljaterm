@@ -20,9 +20,6 @@
         <div class="foot-row"><span class="foot-label">DIR</span><button id="dir-pick" class="btn" title="Choose which folder the sidebar lists">choose folder…</button></div>
         <div class="foot-row"><span class="foot-label">FONT</span><select id="font-picker" class="btn"></select></div>
         <div class="foot-row"><span class="foot-label">ROLL</span><select id="roll-brain" class="btn"></select></div>
-        <div class="foot-row"><span class="foot-label">VOICE</span><select id="voice-pick" class="btn"><option value="on">on</option><option value="off">off</option></select></div>
-        <div class="foot-row"><span class="foot-label">CLIPS</span><input id="voice-vol" type="range" min="0" max="100" title="Volume of Roll's recorded voice clips" /></div>
-        <div class="foot-row"><span class="foot-label">BLIPS</span><input id="blip-vol" type="range" min="0" max="100" title="Volume of Roll's animalese typing blips" /></div>
         <div class="foot-row"><span class="foot-label">MEM</span><button id="mem-clear" class="btn">clear memory</button></div>
         <div class="foot-row"><span class="foot-label">CRT</span><select id="fx-scope" class="btn" title="CRT shader on Roll's face"><option value="off">off</option><option value="on">on</option></select><button id="fx-edit" class="btn" title="Shader settings">⚙</button></div>
       </div>
@@ -33,6 +30,11 @@
         <button id="sidebar-show" class="btn" title="Show sidebar (⌘B)">›</button>
         <div id="tab-list"></div>
         <button id="new-tab" class="btn" title="New tab (⌘T)">＋</button>
+        <div id="sysinfo" class="lcd" title="Click to collapse">
+          <span id="si-batt" class="si-cell"></span>
+          <span id="si-day" class="si-cell"></span>
+          <span id="si-clock" class="si-cell"></span>
+        </div>
       </div>
       <div id="terminals">
         <div id="empty-state">
@@ -70,6 +72,7 @@
       <div class="assistant-head bevel-title">
         <span id="assistant-name">ROLL</span>
         <span style="-webkit-app-region: no-drag; display:flex; gap:3px;">
+          <button id="assistant-settings" class="btn" title="Roll settings">⚙</button>
           <button id="assistant-tasks" class="btn" title="Task manager">☰</button>
           <button id="assistant-min" class="btn" title="Minimize">▁</button>
         </span>
@@ -116,6 +119,29 @@
             <span id="fx-error" class="fx-error"></span>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Roll settings (voice) -->
+  <div id="roll-modal" hidden>
+    <div id="roll-dialog" class="panel-raised">
+      <div class="fx-head bevel-title">
+        <span class="fx-title">ROLL SETTINGS</span>
+        <button id="roll-close" class="btn" title="Close">×</button>
+      </div>
+      <div class="roll-settings-body">
+        <div class="roll-section-label">VOICE</div>
+        <label class="fx-row"><span>Voice</span>
+          <select id="voice-pick" class="btn">
+            <option value="on">on</option>
+            <option value="off">off</option>
+          </select>
+        </label>
+        <label class="fx-row"><span>Clips</span><input id="voice-vol" type="range" min="0" max="100" title="Volume of Roll's recorded voice clips" /></label>
+        <label class="fx-row"><span>Blips</span><input id="blip-vol" type="range" min="0" max="100" title="Volume of Roll's animalese typing blips" /></label>
+        <div class="roll-section-label">SPEECH</div>
+        <label class="fx-row"><span>Speed</span><input id="roll-speed" type="range" min="0" max="100" title="How fast Roll types out what she says" /></label>
       </div>
     </div>
   </div>

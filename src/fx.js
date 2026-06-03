@@ -18,11 +18,26 @@
   const surfaces = {};            // id -> { el, getSource }
   let shaderList = [];            // [{ where, file, name, preset }]
 
+  // First-open default: the CRT look tuned in the original build. A fresh install — or the dev build's
+  // own clean userData — opens with the shader already dialed in instead of off/blank. Used ONLY when
+  // nothing is saved yet; the moment the user changes anything, their saved localStorage wins.
+  const DEFAULT_CONFIG = {
+    enabled: true,
+    preset: { where: 'bundled', file: 'crt-lite.glslp' },
+    params: {
+      'bundled/scanline.glslp': { BRIGHTNESS: 1.52, SCANLINE_WEIGHT: 0.26 },
+      'bundled/crt-lite.glslp': { GLOW: 0.42, SCAN_WEIGHT: 0.6, CURVATURE: 0.4, VIGNETTE: 0.18, BRIGHT: 1.2, MASK_WEIGHT: 0 },
+    },
+  };
+
   const cfg = loadConfig();
 
   function loadConfig() {
+    let raw = null;
+    try { raw = localStorage.getItem(LS_KEY); } catch (_) {}
+    if (raw == null) return JSON.parse(JSON.stringify(DEFAULT_CONFIG));  // never saved → seed the default
     let c = {};
-    try { c = JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch (_) { c = {}; }
+    try { c = JSON.parse(raw) || {}; } catch (_) { c = {}; }
     return {
       enabled: !!c.enabled,
       preset: c.preset || null,                       // { where, file }

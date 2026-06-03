@@ -11,6 +11,11 @@
   // happy, neutral, worried, sad, etc. — just uses the talking pipeline so she looks like she's
   // actually speaking the words, then settles to rest.
   const STRONG_EMOTION = { laugh: 1, cry: 1, shocked: 1, surprised: 1, angry: 1, rage: 1 };
+  // An inline emote span ([happy]nice[/happy]) is often only a word or two, which types in ~100ms —
+  // too short for the face to register. Hold the emote face at least this long before returning to
+  // the neutral talking mouth, so even a subtle one-word emote is actually seen.
+  const MIN_EMOTE_MS = 650;
+  const now = () => (typeof performance !== 'undefined' ? performance.now() : 0);
 
   // Parse Roll's BBCode-ish markup into one attribute object per visible character. Tags:
   //   emotion: [happy]…[/happy] (any expression name) → emote that face DURING the span, lip-sync
@@ -87,6 +92,9 @@
       this.eyes.alt = '';
       this.eyes.setAttribute('aria-hidden', 'true');
       this.faceEl.replaceChildren(this.img, this.eyes);
+      // Preload the blink eye-frames so the first blink doesn't show a blank/late swap while the
+      // PNG fetches — the browser keeps them cached for the overlay.
+      for (const f of (BLINK.eyes || [])) { const im = new Image(); im.src = `${this.base}roll/frames/${f}.png`; }
       this.talking = false;
       this.animTimer = null;
       this.blinkAnim = null;
@@ -102,6 +110,29 @@
 
     _frame(f) { this.img.src = `${this.base}roll/frames/${f}.png`; }
     _eyeFrame(f) { this.eyes.src = `${this.base}roll/frames/${f}.png`; }
+
+    // The CRT shader paints a WebGL canvas OVER her face rect, so it can only show what it samples —
+    // and it samples this ONE source. The base <img> alone drops the blink (the .eyes overlay is a
+    // separate DOM layer the canvas covers). So composite base + eyes here, mirroring the CSS clip on
+    // .eyes (top 62.5% = the eye band), so blinks survive with the shader on. Returns a 32x32 canvas.
+    faceSource() {
+      const base = this.img;
+      if (!base || !base.complete || !base.naturalWidth) return null;
+      const w = base.naturalWidth, hN = base.naturalHeight;
+      let c = this._composite;
+      if (!c) { c = this._composite = document.createElement('canvas'); }
+      if (c.width !== w || c.height !== hN) { c.width = w; c.height = hN; }
+      const g = this._compositeCtx || (this._compositeCtx = c.getContext('2d'));
+      g.imageSmoothingEnabled = false;
+      g.clearRect(0, 0, w, hN);
+      g.drawImage(base, 0, 0, w, hN);
+      const eyes = this.eyes;
+      if (eyes && eyes.style.display !== 'none' && eyes.complete && eyes.naturalWidth) {
+        const cut = Math.round(hN * 0.625);   // matches .eyes clip-path: inset(0 0 37.5% 0)
+        g.drawImage(eyes, 0, 0, w, cut, 0, 0, w, cut);
+      }
+      return c;
+    }
 
     // Resolve which output device Roll should sing through. Default: system output only,
     // no routing — we must NEVER ask for the microphone just to read device labels, since
@@ -255,8 +286,9 @@
           if (!buf) { buf = await ctx.decodeAudioData(bytes.slice(0)); bufs.set(ctx, buf); }
           const src = ctx.createBufferSource(); src.buffer = buf;
           // CLIP_SCALE pulls the whole recorded-clip range down so the slider lives at a usable
-          // position instead of pinned near zero — the raw .wav files are very hot.
-          const g = ctx.createGain(); g.gain.value = this._clipVol() * 0.45;
+          // position instead of pinned near zero — the raw .wav files are very hot. Kept low so her
+          // baseline exclamations sit UNDER the animalese, not on top of it.
+          const g = ctx.createGain(); g.gain.value = this._clipVol() * 0.26;
           src.connect(g).connect(ctx.destination);
           src.start();
         } catch (_) { /* this sink failed — skip it */ }
@@ -306,11 +338,16 @@
     }
 
     // --- blinking -------------------------------------------------------------
-    // A randomized heartbeat: every ~2.4–6.5s, blink once (and ~1-in-5 times, twice fast). Only
-    // fires while she's at rest or doing the neutral talk; any state change reschedules it.
+    // A randomized heartbeat: blink once (and ~1-in-5 times, twice fast). Only fires while she's at
+    // rest or doing the neutral talk; any state change reschedules it. She blinks ROUGHLY TWICE AS
+    // OFTEN while talking (like people do) — and on a fast enough cadence that a blink actually lands
+    // during a short reply, instead of the old ~4.5s average that mostly fired between sentences.
     _scheduleBlink() {
       clearTimeout(this.blinkTimer);
-      this.blinkTimer = setTimeout(() => this._doBlink(), 2400 + Math.random() * 4100);
+      const talk = this._mode === 'talk';
+      const min = talk ? 900 : 2200;
+      const span = talk ? 1800 : 3800;
+      this.blinkTimer = setTimeout(() => this._doBlink(), min + Math.random() * span);
     }
     _doBlink() {
       if (this._mode !== 'idle' && this._mode !== 'talk') { this._scheduleBlink(); return; }
@@ -321,23 +358,26 @@
         else this._scheduleBlink();
       });
     }
-    // Fast human blink on the EYES OVERLAY only — the mouth/base layer underneath is untouched, so
-    // it reads the same whether she's idle or mid-sentence. ~3 frames × 35ms ≈ a real blink.
+    // Human blink on the EYES OVERLAY only — the mouth/base layer underneath is untouched, so it
+    // reads the same whether she's idle or mid-sentence. ~4 frames × 55ms ≈ 220ms, with the shut
+    // frame held twice (~110ms closed) so the blink is actually perceptible, not a 35ms flash.
     _blinkSeq(done) {
       const seq = BLINK.eyes;
       if (!this.eyes || !seq || !seq.length) { done(); return; }
       if (this.blinkAnim) { clearInterval(this.blinkAnim); this.blinkAnim = null; }
       let i = 0;
-      this.eyes.style.display = 'block';
+      this._eyeFrame(seq[0]);               // paint the first frame BEFORE showing, so there's no
+      this.eyes.style.display = 'block';    // blank flash while the (preloaded) image swaps in
       this.blinkAnim = setInterval(() => {
+        i += 1;
         if (i >= seq.length) {
           clearInterval(this.blinkAnim); this.blinkAnim = null;
           this.eyes.style.display = 'none';   // reveal the base's open eyes again
           done();
           return;
         }
-        this._eyeFrame(seq[i++]);
-      }, 35);
+        this._eyeFrame(seq[i]);
+      }, 55);
     }
     _endBlink() {
       if (this.blinkAnim) { clearInterval(this.blinkAnim); this.blinkAnim = null; }
@@ -375,9 +415,18 @@
       return out.join('\n');
     }
 
+    // Baseline ms-per-character for typing, user-tunable via the ⚙ panel (localStorage 'rollTextSpeed').
+    // Read fresh each line so a drag takes effect on her next reply. Defaults to 38 (the old constant).
+    _baseDelay() {
+      let v = 38;
+      try { const s = localStorage.getItem('rollTextSpeed'); if (s != null && s !== '') v = parseFloat(s); } catch (_) {}
+      return isNaN(v) ? 38 : Math.max(6, Math.min(140, v));
+    }
+
     _clear() {
       if (this.typeTimer) { clearTimeout(this.typeTimer); this.typeTimer = null; }
       if (this.settleTimer) { clearTimeout(this.settleTimer); this.settleTimer = null; }
+      if (this._emoteHoldTimer) { clearTimeout(this._emoteHoldTimer); this._emoteHoldTimer = null; }
     }
 
     // Public entry: never cut off a line that's mid-type. If she's talking (or lines are
@@ -464,11 +513,20 @@
         if (emote !== emoteNow) {
           emoteNow = emote;
           span = null;                                   // force a fresh span across an emote boundary
-          if (emote) { this._neutralTalk = false; this.play(emote); }
+          if (this._emoteHoldTimer) { clearTimeout(this._emoteHoldTimer); this._emoteHoldTimer = null; }
+          if (emote) { this._neutralTalk = false; this.play(emote); this._emoteStart = now(); }
           else {
-            this._neutralTalk = true; this._mode = 'talk';
-            if (this.animTimer) { clearInterval(this.animTimer); this.animTimer = null; }
-            this._frame(MOUTH.closed); this._scheduleBlink();
+            // Back to neutral talk — but keep the emote face up until MIN_EMOTE_MS has elapsed so a
+            // short span is visible. Text keeps typing underneath; only the FACE switch is deferred.
+            const toNeutral = () => {
+              this._emoteHoldTimer = null;
+              this._neutralTalk = true; this._mode = 'talk';
+              if (this.animTimer) { clearInterval(this.animTimer); this.animTimer = null; }
+              this._frame(MOUTH.closed); this._scheduleBlink();
+            };
+            const rest = MIN_EMOTE_MS - (now() - (this._emoteStart || 0));
+            if (rest > 0) this._emoteHoldTimer = setTimeout(toNeutral, rest);
+            else toNeutral();
           }
         }
 
@@ -490,7 +548,7 @@
         if (this._neutralTalk && i % 2 === 0) this._mouthForChar(ch); // mouth on twos
 
         i += 1;
-        let delay = 38 / (a.speed || 1);
+        let delay = this._baseDelay() / (a.speed || 1);
         if (a.pause) delay += a.pause;                                // explicit [.] / [p]
         if ('.!?'.includes(ch)) delay += 170;                         // breathe at sentence ends
         else if (',;:'.includes(ch)) delay += 80;

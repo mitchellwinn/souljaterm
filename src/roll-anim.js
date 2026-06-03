@@ -32,8 +32,9 @@ window.ROLL_EXPRESSIONS = ['neutral', 'happy', 'laugh', 'talk', 'surprised',
 // Eyes-only blink overlay (top 20px). It's a separate layer stacked over the mouth, so the SAME
 // blink works whether she's idle or talking — no combined talk+blink frames needed (4-6 unused).
 // The engine plays this on a randomized timer, occasionally twice fast. Tweak the order freely.
+// closing → CLOSED (held two frames so the shut eyes actually register, not a 1-frame flash) → opening.
 window.ROLL_BLINK = {
-  eyes: ['talk_blink7', 'talk_blink8', 'talk_blink9'],   // closing → closed → opening
+  eyes: ['talk_blink7', 'talk_blink8', 'talk_blink8', 'talk_blink9'],
 };
 // Neutral mouth visemes for lip-syncing to printed text: closed (rest/space), mid (consonant),
 // open (vowel). The base layer; the engine sets one per character as the line types out.

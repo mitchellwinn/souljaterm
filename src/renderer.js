@@ -43,6 +43,14 @@ const el = {
   fxSource: document.getElementById('fx-source'),
   fxApply: document.getElementById('fx-apply'),
   fxError: document.getElementById('fx-error'),
+  assistantSettings: document.getElementById('assistant-settings'),
+  rollModal: document.getElementById('roll-modal'),
+  rollClose: document.getElementById('roll-close'),
+  rollSpeed: document.getElementById('roll-speed'),
+  sysinfo: document.getElementById('sysinfo'),
+  siBatt: document.getElementById('si-batt'),
+  siDay: document.getElementById('si-day'),
+  siClock: document.getElementById('si-clock'),
 };
 
 /* ---- color: projects fanned across the rainbow, alphabetical ---- */
@@ -788,6 +796,72 @@ function initBlipVol() {
     try { localStorage.setItem('rollBlipVol', String(el.blipVol.value / 100)); } catch (_) {}
   });
 }
+// Baseline typing speed for her replies. roll-face reads 'rollTextSpeed' (ms per character) at the
+// start of every line. Slider runs SLOW (left) → FAST (right); we map 0..100 onto SPEED_MS_MAX..MIN
+// so dragging right speeds her up. Default ≈ the engine's built-in 38ms/char.
+const SPEED_MS_MIN = 14, SPEED_MS_MAX = 75;
+function speedToSlider(ms) { return Math.round(((SPEED_MS_MAX - ms) / (SPEED_MS_MAX - SPEED_MS_MIN)) * 100); }
+function sliderToSpeed(v) { return Math.round(SPEED_MS_MAX - (v / 100) * (SPEED_MS_MAX - SPEED_MS_MIN)); }
+function initTextSpeed() {
+  if (!el.rollSpeed) return;
+  let ms = 38;
+  try { const s = localStorage.getItem('rollTextSpeed'); if (s != null && s !== '') ms = parseFloat(s); } catch (_) {}
+  if (isNaN(ms)) ms = 38;
+  el.rollSpeed.value = speedToSlider(Math.max(SPEED_MS_MIN, Math.min(SPEED_MS_MAX, ms)));
+  el.rollSpeed.addEventListener('input', () => {
+    try { localStorage.setItem('rollTextSpeed', String(sliderToSpeed(+el.rollSpeed.value))); } catch (_) {}
+  });
+}
+// Roll's settings modal (the ⚙ in her header): voice on/off + clip/blip volume + speech speed.
+function initRollSettings() {
+  if (!el.assistantSettings || !el.rollModal) return;
+  const open = () => { el.rollModal.hidden = false; };
+  const close = () => { el.rollModal.hidden = true; };
+  el.assistantSettings.addEventListener('click', open);
+  if (el.rollClose) el.rollClose.addEventListener('click', close);
+  el.rollModal.addEventListener('click', (e) => { if (e.target === el.rollModal) close(); });
+}
+
+/* ---- system-info HUD (battery / day / clock) on the right of the title bar ---- */
+const DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+function tickClock() {
+  if (!el.siClock) return;
+  const d = new Date();
+  let hh = d.getHours();
+  const mm = pad2(d.getMinutes());
+  const ampm = hh >= 12 ? 'PM' : 'AM';
+  hh = hh % 12; if (hh === 0) hh = 12;
+  el.siClock.textContent = `${hh}:${mm} ${ampm}`;
+  el.siDay.textContent = `${DAYS[d.getDay()]} ${pad2(d.getMonth() + 1)}.${pad2(d.getDate())}`;
+}
+function renderBattery(b) {
+  if (!el.siBatt) return;
+  if (!b) { el.siBatt.textContent = ''; return; }    // desktop / no battery API → hide the cell
+  const pct = Math.round(b.level * 100);
+  el.siBatt.textContent = (b.charging ? '⚡' : '') + 'BAT ' + pct + '%';
+  el.sysinfo.classList.toggle('charging', b.charging);
+  el.sysinfo.classList.toggle('low', !b.charging && pct <= 20);
+}
+function initSysInfo() {
+  if (!el.sysinfo) return;
+  tickClock();
+  setInterval(tickClock, 15000);   // minute-resolution clock; 15s keeps it honest near the rollover
+  // collapse to clock-only on click; remembered across launches
+  try { if (localStorage.getItem('sysinfoCollapsed') === '1') el.sysinfo.classList.add('collapsed'); } catch (_) {}
+  el.sysinfo.addEventListener('click', () => {
+    const c = el.sysinfo.classList.toggle('collapsed');
+    try { localStorage.setItem('sysinfoCollapsed', c ? '1' : '0'); } catch (_) {}
+  });
+  if (navigator.getBattery) {
+    navigator.getBattery().then((b) => {
+      renderBattery(b);
+      for (const ev of ['levelchange', 'chargingchange']) b.addEventListener(ev, () => renderBattery(b));
+    }).catch(() => renderBattery(null));
+  } else {
+    renderBattery(null);
+  }
+}
 /* ---- Roll's task manager: free-form "!do this" agents she runs for you ---- */
 // No input box here on purpose — the one way to start a task is to "!type" it to Roll in her
 // chat. The panel is just the live view of what she's doing.
@@ -1021,9 +1095,9 @@ document.body.classList.add(window.souljaterm.platform || 'darwin'); // lets CSS
 // Roll's pixel-art portrait is the only shaded surface — her low res is what makes scanlines read
 // like a real CRT. Hand the engine her <img> each frame.
 function getRollFaceSource() {
-  const img = el.face.querySelector('img');
-  if (!img || !img.complete || !img.naturalWidth) return null;
-  return img;
+  // Composite of her mouth/base + blink-eyes overlay (see RollFace.faceSource), so the shader keeps
+  // her blink — sampling the raw <img> alone would drop it under the canvas.
+  return rollFace.faceSource();
 }
 
 function fmt(v) { return (Math.round(v * 100) / 100).toString(); }
@@ -1098,6 +1172,9 @@ function initFx() {
   initVoicePick();
   initVoiceVol();
   initBlipVol();
+  initTextSpeed();            // baseline typing speed (Roll settings ⚙)
+  initRollSettings();         // ⚙ panel: voice on/off + volumes + speed
+  initSysInfo();              // battery / day / clock HUD on the right of the title bar
   initTaskUI();               // Roll's task manager panel (☰ in her header, or "!" in chat)
   initFx();                   // RetroArch CRT shaders over screen surfaces (CRT picker in sidebar foot)
   rollFace.intro(lastRoll);   // absent for a beat → "appear" clip + CRT warp-in → greeting
