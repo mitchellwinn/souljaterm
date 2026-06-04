@@ -138,6 +138,7 @@
         FrameCount: gl.getUniformLocation(this.program, 'FrameCount'),
         FrameDirection: gl.getUniformLocation(this.program, 'FrameDirection'),
         POWER_ON: gl.getUniformLocation(this.program, 'POWER_ON'),
+        GLITCH: gl.getUniformLocation(this.program, 'GLITCH'),
         Texture: gl.getUniformLocation(this.program, 'Texture'),
         Original: gl.getUniformLocation(this.program, 'Original'),
         OriginalSize: gl.getUniformLocation(this.program, 'OriginalSize'),
@@ -191,6 +192,8 @@
       // CRT power-on progress (1 = fully on / no effect). Driven by Fx during Roll's boot warp-in;
       // injected as a built-in uniform (below) so shaders get it without a #pragma param slider.
       this.powerOn = 1;
+      // Transient glitch intensity (0 = none), injected as a built-in uniform like POWER_ON.
+      this.glitch = 0;
       this.error = null;
       // Source texture (the surface we're shading), uploaded each frame.
       this.srcTex = gl.createTexture();
@@ -298,6 +301,7 @@
         if (pass.loc.FrameCount) gl.uniform1i(pass.loc.FrameCount, frameCount | 0);
         if (pass.loc.FrameDirection) gl.uniform1i(pass.loc.FrameDirection, 1);
         if (pass.loc.POWER_ON) gl.uniform1f(pass.loc.POWER_ON, this.powerOn != null ? this.powerOn : 1.0);
+        if (pass.loc.GLITCH) gl.uniform1f(pass.loc.GLITCH, this.glitch != null ? this.glitch : 0.0);
         if (pass.loc.OriginalSize) gl.uniform2f(pass.loc.OriginalSize, origW, origH);
 
         // texture unit 0 = input, unit 1 = original source image

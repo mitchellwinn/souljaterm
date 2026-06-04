@@ -18,12 +18,21 @@
   // CRT power-on ramp: poDur>0 means an animation is in flight; the loop reads currentPowerOn()
   // each frame so the turn-on stays smooth regardless of paint cadence. poVal holds it otherwise.
   let poVal = 1, poStart = 0, poDur = 0;
+  // Transient CRT "glitch" pulse (sprite suddenly changed a lot). Decays linearly to 0 over glDur;
+  // the loop reads currentGlitch() each frame and feeds it to the shader's GLITCH uniform.
+  let glVal = 0, glStart = 0, glDur = 0;
   const perfNow = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : 0);
   function currentPowerOn() {
     if (!poDur) return poVal;
     const t = (perfNow() - poStart) / poDur;
     if (t >= 1) { poDur = 0; poVal = 1; return 1; }
     return t > 0 ? t : 0;
+  }
+  function currentGlitch() {
+    if (!glDur) return 0;
+    const t = (perfNow() - glStart) / glDur;
+    if (t >= 1) { glDur = 0; return 0; }
+    return glVal * (1 - t);            // ease out to nothing
   }
   const surfaces = {};            // id -> { el, getSource }
   let shaderList = [];            // [{ where, file, name, preset }]
@@ -87,6 +96,7 @@
     gl.clear(gl.COLOR_BUFFER_BIT);
     frame++;
     chain.powerOn = currentPowerOn();
+    chain.glitch = currentGlitch();
 
     const cssH = window.innerHeight;
     const scale = dpr();
@@ -101,11 +111,15 @@
       const rect = node.getBoundingClientRect();
       if (rect.width < 2 || rect.height < 2) continue;
 
+      // Pull the shaded region IN by `inset` CSS px on every side so the tube sits INSIDE the panel's
+      // bezel (the surrounding plastic frame keeps showing) instead of painting over it.
+      const ins = (surf.inset || 0) * scale;
       // CSS rect (origin top-left) -> framebuffer pixels (origin bottom-left).
-      const x = Math.round(rect.left * scale);
-      const y = Math.round((cssH - (rect.top + rect.height)) * scale);
-      const w = Math.round(rect.width * scale);
-      const h = Math.round(rect.height * scale);
+      const x = Math.round(rect.left * scale + ins);
+      const y = Math.round((cssH - (rect.top + rect.height)) * scale + ins);
+      const w = Math.round(rect.width * scale - ins * 2);
+      const h = Math.round(rect.height * scale - ins * 2);
+      if (w < 2 || h < 2) continue;
 
       try {
         chain.uploadSource(src);
@@ -170,7 +184,9 @@
       window.addEventListener('resize', () => { /* loop re-reads size each frame */ });
       emit();
     },
-    registerSurface(id, el, getSource) { surfaces[id] = { el, getSource }; }, // el: Element | () => Element
+    // el: Element | () => Element. opts.inset = CSS px to shrink the shaded rect on each side (keeps
+    // the surface's bezel visible around the tube).
+    registerSurface(id, el, getSource, opts) { surfaces[id] = { el, getSource, inset: (opts && opts.inset) || 0 }; },
     setEnabled(on) {
       cfg.enabled = !!on; saveConfig();
       if (cfg.enabled) start(); else stop();
@@ -197,6 +213,14 @@
     setPowerOn(v) { poDur = 0; poVal = Math.max(0, Math.min(1, v)); },
     // Play the CRT tube turn-on: ramp POWER_ON 0 -> 1 over durationMs (the loop animates the shader).
     powerOn(durationMs) { poVal = 0; poStart = perfNow(); poDur = Math.max(1, durationMs || 1100); start(); },
+    // Fire a transient glitch pulse (0..1 intensity) that decays over durationMs — the shader tears/
+    // desyncs briefly, as if the old tube struggled with the sudden change. Stacks to the stronger hit.
+    glitch(amount, durationMs) {
+      const a = Math.max(0, Math.min(1, amount == null ? 0.6 : amount));
+      if (a <= 0) return;
+      glVal = Math.max(a, currentGlitch());   // don't let a new small hit weaken a big one still ringing
+      glStart = perfNow(); glDur = Math.max(60, durationMs || 380);
+    },
     // Live-edit: recompile the single-pass current preset from edited source text.
     applySource(text) {
       if (!chain) return { ok: false, error: 'no chain' };

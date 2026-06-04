@@ -30,6 +30,13 @@ uniform COMPAT_PRECISION float BRIGHT;
 // Boot warp-in progress, fed by Fx during Roll's "power-on" (1.0 = fully on / no effect). Not a
 // #pragma param — glslp.js injects it as a built-in uniform so it stays out of the CRT slider UI.
 uniform COMPAT_PRECISION float POWER_ON;
+// Transient glitch pulse (0 = none), injected by glslp.js and driven by Fx when Roll's face changes
+// suddenly — the tube tears/desyncs briefly like aging hardware. FrameCount drives the always-on life.
+uniform COMPAT_PRECISION float GLITCH;
+uniform int FrameCount;
+
+float hash11(float n) { return fract(sin(n) * 43758.5453123); }
+float hash21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
 
 // barrel-distort uv around center
 vec2 warp(vec2 uv) {
@@ -67,7 +74,25 @@ void main() {
         return;
     }
 
-    vec3 col = COMPAT_TEXTURE(Texture, uv).rgb;
+    // --- time-based life + glitch (the power-on takeover above owns the screen while it runs) ---
+    float fc = float(FrameCount);
+    float time = fc * 0.01667;                          // ~seconds at 60fps
+    float g = clamp(GLITCH, 0.0, 1.0);
+    float chroma = 0.0;
+    if (po >= 1.0 && g > 0.001) {
+        // shove random scanlines sideways — more rows, further, the bigger the hit
+        float row = floor(uv.y * TextureSize.y);
+        float n = hash21(vec2(row, floor(time * 36.0)));
+        float tear = step(1.0 - g * 0.7, n) * (hash11(row + time) * 2.0 - 1.0) * g * 0.07;
+        uv.x = clamp(uv.x + tear, 0.0, 1.0);
+        chroma = g * 0.006 * (0.5 + n);                 // RGB split that widens with the glitch
+    }
+
+    // sample with a chroma offset (chroma == 0 → identical taps → no split when calm)
+    vec3 col;
+    col.r = COMPAT_TEXTURE(Texture, uv + vec2(chroma, 0.0)).r;
+    col.g = COMPAT_TEXTURE(Texture, uv).g;
+    col.b = COMPAT_TEXTURE(Texture, uv - vec2(chroma, 0.0)).b;
     // cheap phosphor glow: blend a few neighbour taps
     vec2 px = 1.0 / TextureSize;
     vec3 glow = COMPAT_TEXTURE(Texture, uv + vec2(px.x, 0.0)).rgb
@@ -78,8 +103,8 @@ void main() {
     col *= BRIGHT * poBright;                                          // power-on flash on top of base brightness
     if (poSat != 1.0) col = mix(vec3(dot(col, vec3(0.299, 0.587, 0.114))), col, poSat); // bleach during turn-on
 
-    // scanlines locked to source rows
-    float beam = sin(uv.y * TextureSize.y * 3.14159265);
+    // scanlines locked to source rows, with a slow vertical drift so the beam reads as alive
+    float beam = sin((uv.y * TextureSize.y - time * 0.6) * 3.14159265);
     float scan = 1.0 - SCAN_WEIGHT * (1.0 - abs(beam));
     col *= scan;
 
@@ -95,6 +120,17 @@ void main() {
     vec2 v = vTex * (1.0 - vTex.yx);
     float vig = pow(v.x * v.y * 15.0, VIGNETTE);
     col *= clamp(vig, 0.0, 1.0);
+
+    // --- subtle life so the tube is never frozen ---
+    float grain = hash21(gl_FragCoord.xy + vec2(time * 13.0, time * 7.0));
+    col *= 1.0 + (grain - 0.5) * 0.05;                  // +/-2.5% animated phosphor noise
+    col *= 0.985 + 0.015 * sin(time * 6.2831);           // gentle mains flicker
+    float roll = sin((uv.y - time * 0.12) * 6.2831);     // slow rolling brightness band
+    col *= 1.0 + max(0.0, roll) * 0.03;
+    if (po >= 1.0 && g > 0.001) {                         // sparse white static streaks during a glitch
+        float s = hash21(vec2(floor(uv.y * TextureSize.y), floor(time * 26.0)));
+        col += vec3(0.6) * g * step(1.0 - g * 0.15, s);
+    }
 
     gl_FragColor = vec4(col, 1.0);
 }

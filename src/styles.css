@@ -64,7 +64,7 @@ body.darwin .sidebar-head { padding-left: 76px; }   /* clear macOS traffic light
 #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 #tabbar { height: 26px; flex: 0 0 26px; display: flex; align-items: stretch; -webkit-app-region: drag; gap: 3px; }
 body.darwin #app.sidebar-collapsed #tabbar { padding-left: 76px; }
-#sidebar-show { display: none; -webkit-app-region: no-drag; align-self: center; padding: 0 6px; }
+#sidebar-show { display: none; -webkit-app-region: no-drag; align-self: center; padding: 0 6px; position: relative; z-index: 1; }
 #app.sidebar-collapsed #sidebar-show { display: inline-flex; align-items: center; }
 #tab-list { display: flex; align-items: stretch; gap: 3px; overflow-x: auto; }
 
@@ -103,10 +103,21 @@ body.darwin #app.sidebar-collapsed #tabbar { padding-left: 76px; }
 .tab .close:hover { opacity: 1; }
 /* the focused tab gets more room so its "dir: what's happening" summary stays readable,
    while background tabs stay compact and ellipsize. */
-.tab.active { background: var(--tab-bg-active, #aaa); padding-top: 2px; max-width: 380px; }
+.tab.active {
+  background-color: var(--tab-bg-active, #aaa);
+  /* faint complementary checkerboard so the focused tab pops without fighting its own hue */
+  background-image: repeating-conic-gradient(var(--tab-comp, transparent) 0% 25%, transparent 0% 50%);
+  background-size: 6px 6px;
+  /* recolor the bevel highlight + add a top accent line in the bright complementary tone */
+  border-color: var(--tab-comp-bold, var(--light)) var(--darker) transparent var(--tab-comp-bold, var(--light));
+  box-shadow: inset 0 2px 0 var(--tab-comp-bold, transparent);
+  padding-top: 2px; max-width: 380px;
+}
 .tab.attention { animation: flash .7s steps(2, jump-none) infinite; }
 @keyframes flash { 50% { background: #ffe08a; color: #1a1a1a; } }
-#new-tab { -webkit-app-region: no-drag; font-size: 14px; }
+/* position+z-index gives these toolbar controls their own stacking context so the surrounding
+   -webkit-app-region:drag title bar can't swallow their clicks (the classic "+ does nothing" bug). */
+#new-tab { -webkit-app-region: no-drag; font-size: 14px; position: relative; z-index: 1; }
 
 /* ---- terminal screen ---- */
 #terminals { flex: 1; position: relative; background: var(--screen);
@@ -116,54 +127,64 @@ body.darwin #app.sidebar-collapsed #tabbar { padding-left: 76px; }
 .term-host.active { display: block; }
 .xterm { height: 100%; }
 
-/* ---- 90s scrollbar ---- */
-/* Giving ::-webkit-scrollbar an explicit width turns off the macOS overlay scrollbar and
-   makes a classic one that reserves its own column. xterm's fit addon subtracts that width
-   when sizing the grid, so terminal text stops at the bar instead of running underneath it. */
-.xterm-viewport::-webkit-scrollbar { width: 15px; }
-/* Always reserve the scrollbar gutter so xterm sizes the grid to leave room for it — otherwise the
-   bar only appears once output overflows and ends up drawn over the rightmost column. */
-.xterm-viewport { overflow-y: scroll; }
-.xterm-viewport::-webkit-scrollbar-track {
-  /* recessed dithered gray, à la Win95 */
+/* ---- Win98 scrollbars, everywhere ---- */
+/* ONE style for every scrollable surface — terminal, chat, the projects/DISK list, the task and
+   shader panels, textareas. Recessed dithered track, raised beveled thumb, arrow buttons with
+   triangles drawn from two gradients (no images — CSP-safe). An explicit size also turns off the
+   macOS overlay bar so the classic one reserves its own column. */
+.xterm-viewport { overflow-y: scroll; }   /* keep: xterm's fit addon reserves the grid gutter from this */
+::-webkit-scrollbar { width: 15px; height: 15px; }
+::-webkit-scrollbar-track {
   background: repeating-conic-gradient(var(--chrome) 0 25%, var(--chrome-deep) 0 50%) 0 0 / 2px 2px;
-  border-left: 1px solid var(--dark);
 }
-.xterm-viewport::-webkit-scrollbar-thumb {
+::-webkit-scrollbar-thumb {
   background: var(--chrome);
   border: 2px solid; border-color: var(--light) var(--dark) var(--dark) var(--light);
-  min-height: 24px;
+  min-height: 24px; min-width: 24px;
 }
-.xterm-viewport::-webkit-scrollbar-thumb:active {
-  border-color: var(--dark) var(--light) var(--light) var(--dark);
-}
-/* raised arrow buttons at each end; triangle drawn with two gradients (no img — CSP-safe) */
-.xterm-viewport::-webkit-scrollbar-button:vertical {
-  height: 15px; background-color: var(--chrome);
+::-webkit-scrollbar-thumb:active { border-color: var(--dark) var(--light) var(--light) var(--dark); }
+::-webkit-scrollbar-corner { background: var(--chrome); }
+/* raised arrow buttons at each end */
+::-webkit-scrollbar-button {
+  background-color: var(--chrome); background-repeat: no-repeat;
   border: 2px solid; border-color: var(--light) var(--dark) var(--dark) var(--light);
-  background-repeat: no-repeat;
 }
-.xterm-viewport::-webkit-scrollbar-button:vertical:active {
-  border-color: var(--dark) var(--light) var(--light) var(--dark);
-}
-.xterm-viewport::-webkit-scrollbar-button:vertical:decrement {
+::-webkit-scrollbar-button:active { border-color: var(--dark) var(--light) var(--light) var(--dark); }
+::-webkit-scrollbar-button:vertical { height: 15px; }
+::-webkit-scrollbar-button:horizontal { width: 15px; }
+/* one button per end only — drop the phantom doubles and the wrong-way buttons */
+::-webkit-scrollbar-button:vertical:start:increment,
+::-webkit-scrollbar-button:vertical:end:decrement,
+::-webkit-scrollbar-button:horizontal:start:increment,
+::-webkit-scrollbar-button:horizontal:end:decrement { display: none; }
+/* triangle glyphs */
+::-webkit-scrollbar-button:vertical:decrement {
   background-image:
     linear-gradient(to top right, transparent 49%, var(--ink) 50%),
     linear-gradient(to top left,  var(--ink) 50%, transparent 51%);
-  background-size: 4px 6px, 4px 6px;
-  background-position: 2.5px center, 6.5px center;
+  background-size: 4px 6px, 4px 6px; background-position: 2.5px center, 6.5px center;
 }
-.xterm-viewport::-webkit-scrollbar-button:vertical:increment {
+::-webkit-scrollbar-button:vertical:increment {
   background-image:
     linear-gradient(to bottom right, transparent 49%, var(--ink) 50%),
     linear-gradient(to bottom left,  var(--ink) 50%, transparent 51%);
-  background-size: 4px 6px, 4px 6px;
-  background-position: 2.5px center, 6.5px center;
+  background-size: 4px 6px, 4px 6px; background-position: 2.5px center, 6.5px center;
 }
-/* single button per end — kill the phantom second buttons and the corner */
-.xterm-viewport::-webkit-scrollbar-button:vertical:start:increment,
-.xterm-viewport::-webkit-scrollbar-button:vertical:end:decrement { display: none; }
-.xterm-viewport::-webkit-scrollbar-corner { background: var(--chrome); }
+::-webkit-scrollbar-button:horizontal:decrement {
+  background-image:
+    linear-gradient(to bottom left, transparent 49%, var(--ink) 50%),
+    linear-gradient(to top left,   var(--ink) 50%, transparent 51%);
+  background-size: 6px 4px, 6px 4px; background-position: center 2.5px, center 6.5px;
+}
+::-webkit-scrollbar-button:horizontal:increment {
+  background-image:
+    linear-gradient(to bottom right, transparent 49%, var(--ink) 50%),
+    linear-gradient(to top right,    var(--ink) 50%, transparent 51%);
+  background-size: 6px 4px, 6px 4px; background-position: center 2.5px, center 6.5px;
+}
+/* the tab bar's horizontal overflow stays a slim, button-less sliver so it never eats the 26px bar */
+#tab-list::-webkit-scrollbar { height: 6px; }
+#tab-list::-webkit-scrollbar-button { display: none; }
 
 #empty-state { position: absolute; inset: 0; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 10px; color: var(--lcd); font-family: var(--mono-font); }
@@ -212,7 +233,9 @@ body.darwin #app.sidebar-collapsed #tabbar { padding-left: 76px; }
    portrait stays square via object-fit:contain. Low min-height so it keeps
    shrinking on a very short window instead of shoving the input off the bottom. */
 #face { flex: 0 1 auto; aspect-ratio: 1 / 1; width: 100%; min-height: 40px; padding: 0; position: relative;
-  display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+  /* recess the screen so the CRT (inset a few px by the shader) reads as sitting INSIDE the plastic bezel */
+  box-shadow: inset 0 0 7px 1px rgba(0,0,0,.5); }
 #face img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated;
   -webkit-user-drag: none; user-select: none; pointer-events: none; }
 /* Eyes layer: stacked over the mouth/base img and clipped to the top 20px (of 32 = 62.5%) so a
@@ -243,18 +266,7 @@ body.darwin #app.sidebar-collapsed #tabbar { padding-left: 76px; }
    for long replies rather than growing the panel. */
 #msg { flex: 1 1 0; min-height: 72px; overflow-y: scroll; padding: 9px; font: 12px var(--mono-font);
   line-height: 1.5; color: var(--lcd); white-space: pre-wrap; word-break: break-word; }
-/* Styled 90s scrollbar (like the terminal, slimmer + no arrow buttons for the narrow panel).
-   An explicit width kills the macOS overlay bar that rendered over the inset border and looked
-   cut off; overflow-y:scroll reserves the gutter so text wraps clear of it instead of under it. */
-#msg::-webkit-scrollbar { width: 11px; }
-#msg::-webkit-scrollbar-track {
-  background: repeating-conic-gradient(var(--chrome) 0 25%, var(--chrome-deep) 0 50%) 0 0 / 2px 2px;
-  border-left: 1px solid var(--dark); }
-#msg::-webkit-scrollbar-thumb {
-  background: var(--chrome);
-  border: 2px solid; border-color: var(--light) var(--dark) var(--dark) var(--light);
-  min-height: 24px; }
-#msg::-webkit-scrollbar-thumb:active { border-color: var(--dark) var(--light) var(--light) var(--dark); }
+/* #msg keeps overflow-y:scroll (above) to reserve its gutter; the universal Win98 scrollbar styles it. */
 /* "Roll is thinking..." status: pulsing yellow→orange, centered, while her brain works */
 #msg.thinking { color: #ffb02e; text-align: center; animation: rollThinking 1.1s ease-in-out infinite; }
 @keyframes rollThinking { 0%, 100% { color: #ffd24a; } 50% { color: #ff6f1a; } }
@@ -264,6 +276,35 @@ body.darwin #app.sidebar-collapsed #tabbar { padding-left: 76px; }
   50% { transform: translate(-.6px,.5px); } 75% { transform: translate(.5px,.6px); } 100% { transform: translate(0,0); } }
 #msg .fx-wave { display: inline-block; animation: fxWave 1s ease-in-out infinite; }
 @keyframes fxWave { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+/* more BBCode effects. MOTION (transform) → inline-block, applied PER WORD by the renderer so a
+   wrapped line can't inflate the box height. */
+#msg .fx-wobble { display: inline-block; animation: fxWobble .5s ease-in-out infinite; }
+@keyframes fxWobble { 0%, 100% { transform: rotate(-7deg); } 50% { transform: rotate(7deg); } }
+#msg .fx-spin { display: inline-block; animation: fxSpin 1.1s linear infinite; }
+@keyframes fxSpin { to { transform: rotate(360deg); } }
+#msg .fx-bounce { display: inline-block; animation: fxBounce .6s cubic-bezier(.28,.84,.42,1) infinite; }
+@keyframes fxBounce { 0%, 50%, 100% { transform: translateY(0); } 30% { transform: translateY(-4px); } }
+#msg .fx-swing { display: inline-block; transform-origin: top center; animation: fxSwing .9s ease-in-out infinite; }
+@keyframes fxSwing { 0%, 100% { transform: rotate(-11deg); } 50% { transform: rotate(11deg); } }
+#msg .fx-pop { display: inline-block; animation: fxPop .5s ease-in-out infinite; }
+@keyframes fxPop { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.35); } }
+/* STYLE (paint only) — may span freely. */
+#msg .fx-b { font-weight: bold; }
+#msg .fx-i { font-style: italic; }
+#msg .fx-u { text-decoration: underline; }
+#msg .fx-s { text-decoration: line-through; }
+#msg .fx-big { font-size: 1.4em; font-weight: bold; }
+#msg .fx-small { font-size: .78em; opacity: .85; }
+#msg .fx-fade { opacity: .5; }
+#msg .fx-glow { text-shadow: 0 0 4px currentColor, 0 0 9px currentColor; }
+#msg .fx-shadow { text-shadow: 1px 2px 0 rgba(0,0,0,.6); }
+#msg .fx-outline { -webkit-text-stroke: .8px currentColor; -webkit-text-fill-color: transparent; }
+#msg .fx-flash { animation: fxFlash .5s steps(1) infinite; }
+@keyframes fxFlash { 50% { opacity: .25; } }
+#msg .fx-rainbow { animation: fxRainbow 2.4s linear infinite; }
+@keyframes fxRainbow {
+  0% { color: #ff5b5b; } 17% { color: #ffb14e; } 33% { color: #ffe84e; } 50% { color: #5bff7a; }
+  67% { color: #5bc7ff; } 83% { color: #b07bff; } 100% { color: #ff5b5b; } }
 #chat-form { flex: 0 0 auto; display: flex; }
 #chat-input {
   flex: 1; min-width: 0; font: 12px var(--mono-font); color: var(--lcd);

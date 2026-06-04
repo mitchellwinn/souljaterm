@@ -68,11 +68,13 @@
   const EMOTE_SFX = {
     happy: 'delight', laugh: 'laughter', surprised: 'amazed', shocked: 'shocked', worried: 'worry',
     sad: 'heartbreak', cry: 'distress', angry: 'intense', rage: 'intense',
-    wink: 'mischief', mischievous: 'mischief',
+    wink: 'pleased', mischievous: 'mischief',
     blush: 'bashfulness', shame: 'sheepishness', whine: 'distress',
   };
-  // Both [wink] and [mischievous] fire the 'mischief' sound. [mischievous] is the dedicated 10-frame
-  // grin built for it; [wink] keeps it too as a lighter, quick-tease version.
+  // [mischievous] owns the dedicated 'mischief' sound (its 10-frame grin). [wink] used to share it,
+  // but that made 'mischief' play constantly — it now gets the lighter 'pleased' so the sly sound stays
+  // special. GLITCH_ENERGY: how hard each expression kicks the CRT when it pops on (see _faceGlitch).
+  const GLITCH_ENERGY = { shocked: 1, surprised: 0.8, rage: 0.95, angry: 0.7, laugh: 0.6, cry: 0.6 };
   // Katakana -> hiragana (same 0x60 offset block) so one table voices both scripts.
   const toHira = (ch) => { const c = ch.charCodeAt(0); return (c >= 0x30A1 && c <= 0x30F6) ? String.fromCharCode(c - 0x60) : ch; };
   const vowelOf = (key) => { const v = key[key.length - 1]; return 'aiueo'.includes(v) ? v : ''; };
@@ -84,21 +86,25 @@
   //            [.] or [p] = a held pause before the next character. Unknown tags are ignored.
   // The result is index-aligned with the plain text, so word-wrap (which only swaps a space for a
   // newline) keeps the attributes lined up with the rendered characters.
+  // Text-effect tags Roll can wrap words in. MOTION_TAGS use a CSS transform, so each lives in an
+  // inline-block span applied PER WORD — a motion span that swallowed a wrapped newline would inflate
+  // its line height. STYLE_TAGS are paint-only (weight/color/shadow) and may span freely.
+  const MOTION_TAGS = ['shake', 'wave', 'wobble', 'spin', 'bounce', 'swing', 'pop'];
+  const STYLE_TAGS = ['b', 'i', 'u', 's', 'big', 'small', 'glow', 'flash', 'shadow', 'outline', 'fade', 'rainbow'];
+  const FX_TAGS = new Set([...MOTION_TAGS, ...STYLE_TAGS]);
+  const MOTION_SET = new Set(MOTION_TAGS);
   function parseMarkup(text) {
     const chars = [];
     const stack = [];
     let pause = 0;
     const attrFor = () => {
-      const a = { emote: null, b: false, i: false, color: null, shake: false, wave: false, speed: 1 };
+      const a = { emote: null, color: null, speed: 1, fx: [] };
       for (const t of stack) {
         if (NAMES.includes(t.name)) a.emote = t.name;
-        else if (t.name === 'b') a.b = true;
-        else if (t.name === 'i') a.i = true;
         else if (t.name === 'c') a.color = t.val || a.color;
-        else if (t.name === 'shake') a.shake = true;
-        else if (t.name === 'wave') a.wave = true;
         else if (t.name === 'slow') a.speed = 0.5;
         else if (t.name === 'fast') a.speed = 2;
+        else if (FX_TAGS.has(t.name) && a.fx.indexOf(t.name) < 0) a.fx.push(t.name);
       }
       return a;
     };
@@ -591,6 +597,13 @@
       else this._scheduleBlink();
     }
 
+    // A sudden expression swap is a big change in her pixels — kick the CRT shader so the tube reacts
+    // like aging hardware. Only the high-energy reactions qualify, so quiet little beats don't strobe.
+    _faceGlitch(expr) {
+      const e = GLITCH_ENERGY[expr] || 0;
+      if (e >= 0.55 && window.Fx && window.Fx.glitch) { try { window.Fx.glitch(e, 360); } catch (_) {} }
+    }
+
     // Drive a single ANIM entry (loop/pingpong/once/hold). No blink/scheduler side effects, so the
     // blink overlay can pause and resume the base animation through it.
     _runAnim(a) {
@@ -686,7 +699,10 @@
         }
         out.push(line);
       }
-      return out.join('\n');
+      const wrapped = out.join('\n');
+      // Must stay index-aligned with the parsed attrs — only spaces flip to newlines (1:1). If an edge
+      // case (leading/double spaces) changed the length, skip wrapping so styling never drifts a char.
+      return wrapped.length === String(text).length ? wrapped : text;
     }
 
     // Baseline ms-per-character for typing, user-tunable via the ⚙ panel (localStorage 'rollTextSpeed').
@@ -800,7 +816,7 @@
           emoteNow = emote;
           span = null;                                   // force a fresh span across an emote boundary
           if (this._emoteHoldTimer) { clearTimeout(this._emoteHoldTimer); this._emoteHoldTimer = null; }
-          if (emote) { this._neutralTalk = false; this.play(emote); this._emoteStart = now(); this._playSfx(EMOTE_SFX[emote]); }
+          if (emote) { this._neutralTalk = false; this.play(emote); this._emoteStart = now(); this._playSfx(EMOTE_SFX[emote]); this._faceGlitch(emote); }
           else {
             // Back to neutral talk — but keep the emote face up until MIN_EMOTE_MS has elapsed so a
             // short span is visible. Text keeps typing underneath; only the FACE switch is deferred.
@@ -816,14 +832,15 @@
           }
         }
 
-        const key = (a.b ? 'b' : '') + (a.i ? 'i' : '') + (a.shake ? 's' : '') + (a.wave ? 'w' : '') + (a.color || '');
+        const ws = ch === ' ' || ch === '\n';
+        // Drop motion effects on whitespace: keeps spaces/newlines out of inline-block spans (which
+        // would wreck line spacing) and naturally splits a multi-word motion run into one box per word.
+        const fx = ws ? a.fx.filter((f) => !MOTION_SET.has(f)) : a.fx;
+        const key = (a.color || '') + '|' + fx.join(',');
         if (!span || key !== spanKey) {
           span = document.createElement('span');
-          if (a.b) span.style.fontWeight = 'bold';
-          if (a.i) span.style.fontStyle = 'italic';
           if (a.color) span.style.color = a.color;
-          if (a.shake) span.classList.add('fx-shake');
-          if (a.wave) span.classList.add('fx-wave');
+          fx.forEach((f) => span.classList.add('fx-' + f));
           this.msgEl.appendChild(span);
           spanKey = key;
         }

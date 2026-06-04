@@ -77,12 +77,15 @@ function prettyName(p) { return p === HOME ? '~' : basename(p); }
 function hueOf(p) { const k = prettyName(p); return RAINBOW.has(k) ? RAINBOW.get(k) : hashHue(k); }
 function colorForPath(p) {
   const hue = hueOf(p);
+  const comp = (hue + 180) % 360;     // complementary hue for the active-tab accent + checker
   return {
     hue,
     swatch: `hsl(${hue} 60% 50%)`,
     tabBg: `hsl(${hue} 42% 40%)`,
     tabBgActive: `hsl(${hue} 58% 52%)`,
     tabFg: `hsl(${hue} 30% 96%)`,
+    tabComp: `hsl(${comp} 85% 70% / .34)`,   // translucent — the faint checker fill on the focused tab
+    tabCompBold: `hsl(${comp} 90% 72%)`,      // solid — its bright frame edge
   };
 }
 
@@ -189,6 +192,8 @@ function paintTab(tab) {
   tab.el.style.setProperty('--tab-bg', c.tabBg);
   tab.el.style.setProperty('--tab-bg-active', c.tabBgActive);
   tab.el.style.setProperty('--tab-fg', c.tabFg);
+  tab.el.style.setProperty('--tab-comp', c.tabComp);
+  tab.el.style.setProperty('--tab-comp-bold', c.tabCompBold);
   // Label is "dir: what's happening" once Roll has named the task; just the dir otherwise.
   const label = tab.activity ? `${tab.title}: ${tab.activity}` : tab.title;
   tab.el.querySelector('.label').textContent = label;
@@ -1281,7 +1286,7 @@ function openFxModal() {
 }
 
 function initFx() {
-  Fx.registerSurface('rollface', el.face, getRollFaceSource);
+  Fx.registerSurface('rollface', el.face, getRollFaceSource, { inset: 4 });
   Fx.onChange(renderFxUI);
 
   el.fxScope.addEventListener('change', () => Fx.setEnabled(el.fxScope.value === 'on'));
